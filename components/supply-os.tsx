@@ -1,6 +1,7 @@
 "use client";
 
 import type { User } from "@supabase/supabase-js";
+import { jsPDF } from "jspdf";
 import type { FormEvent, ReactNode } from "react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import {
@@ -514,9 +515,13 @@ function RequisitionsView({
   const [detail, setDetail] = useState<SupplyRequisitionDetail | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
+  const [generalPdfLoading, setGeneralPdfLoading] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [detailError, setDetailError] = useState<string | null>(null);
   const canManageStatus = role?.role === "super_admin" || role?.role === "branch_admin";
   const filtered = requisitions.filter((req) => filter === "todas" || req.status === filter || req.request_type === filter);
+  const allFilteredSelected = filtered.length > 0 && filtered.every((req) => selectedIds.includes(req.id));
 
   async function fetchDetail(requisitionId: string) {
     if (!supabase) throw new Error("Supabase no está configurado.");
@@ -538,22 +543,60 @@ function RequisitionsView({
   }
 
   async function generatePdf(requisitionId: string) {
-    const printWindow = openBlankPdfWindow();
-    if (!printWindow) {
-      setDetailError("No se pudo abrir la ventana del PDF. Revisa que el navegador permita ventanas emergentes.");
-      return;
-    }
-
     setPdfLoadingId(requisitionId);
     setDetailError(null);
     try {
       const pdfDetail = detail?.id === requisitionId ? detail : await fetchDetail(requisitionId);
-      writeRequisitionPdf(printWindow, pdfDetail);
+      await downloadRequisitionPdf(pdfDetail);
     } catch (pdfError) {
-      printWindow.close();
       setDetailError(getErrorMessage(pdfError));
     } finally {
       setPdfLoadingId(null);
+    }
+  }
+
+  function toggleSelectionMode() {
+    setSelectionMode((current) => {
+      if (current) setSelectedIds([]);
+      return !current;
+    });
+  }
+
+  function toggleRequisitionSelection(requisitionId: string) {
+    setSelectedIds((current) =>
+      current.includes(requisitionId) ? current.filter((id) => id !== requisitionId) : [...current, requisitionId],
+    );
+  }
+
+  function toggleSelectAllFiltered() {
+    setSelectedIds((current) => {
+      if (allFilteredSelected) {
+        return current.filter((id) => !filtered.some((req) => req.id === id));
+      }
+
+      const next = new Set(current);
+      filtered.forEach((req) => next.add(req.id));
+      return Array.from(next);
+    });
+  }
+
+  async function generateGeneralPdf() {
+    if (selectedIds.length === 0) {
+      setDetailError("Selecciona al menos una requisición para generar el PDF general.");
+      return;
+    }
+
+    setGeneralPdfLoading(true);
+    setDetailError(null);
+    try {
+      const details = await Promise.all(
+        selectedIds.map((requisitionId) => (detail?.id === requisitionId ? Promise.resolve(detail) : fetchDetail(requisitionId))),
+      );
+      await downloadGeneralRequisitionPdf(details);
+    } catch (pdfError) {
+      setDetailError(getErrorMessage(pdfError));
+    } finally {
+      setGeneralPdfLoading(false);
     }
   }
 
@@ -561,7 +604,21 @@ function RequisitionsView({
     <div>
       <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <PageHeader title="Solicitudes internas" subtitle="Peticiones de insumos por área y sucursal" />
-        <Button onClick={() => setOpen(true)}>+ Nueva Requi</Button>
+        <div className="flex flex-wrap gap-2">
+          {canManageStatus ? (
+            <>
+              <Button variant={selectionMode ? "secondary" : "primary"} onClick={toggleSelectionMode}>
+                {selectionMode ? "Cancelar selección" : "Requi general"}
+              </Button>
+              {selectionMode ? (
+                <Button disabled={selectedIds.length === 0 || generalPdfLoading} onClick={() => void generateGeneralPdf()}>
+                  {generalPdfLoading ? "Generando..." : `PDF general (${selectedIds.length})`}
+                </Button>
+              ) : null}
+            </>
+          ) : null}
+          <Button onClick={() => setOpen(true)}>+ Nueva Requi</Button>
+        </div>
       </div>
       <Segmented value={filter} onChange={setFilter} options={[["todas", "Todas"], ["pendiente", "Pendientes"], ["urgente", "Urgentes"], ["aprobado", "Aprobadas"], ["completado", "Completadas"]]} />
       {detailError ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{detailError}</p> : null}
@@ -570,6 +627,11 @@ function RequisitionsView({
           <table className="w-full border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-[#EDE8E3]">
+                {selectionMode ? (
+                  <th className="whitespace-nowrap px-4 py-3 text-[11px] font-bold uppercase tracking-[0.06em] text-stone-400">
+                    <input type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAllFiltered} className="h-4 w-4 rounded border-[#DDD7D1] text-[#B45309] focus:ring-[#B45309]" />
+                  </th>
+                ) : null}
                 {["ID", "Fecha", "Solicitó", "Sucursal", "Área", "Tipo", "Items", "Estado", "Acciones"].map((label) => (
                   <th key={label} className="whitespace-nowrap px-4 py-3 text-[11px] font-bold uppercase tracking-[0.06em] text-stone-400">{label}</th>
                 ))}
@@ -577,7 +639,18 @@ function RequisitionsView({
             </thead>
             <tbody>
               {filtered.map((req) => (
-                <tr key={req.id} onClick={() => void openDetail(req.id)} className="cursor-pointer border-b border-[#F5F1EE] transition hover:bg-[#FAFAF7]">
+                <tr key={req.id} onClick={() => { if (!selectionMode) void openDetail(req.id); }} className={`border-b border-[#F5F1EE] transition hover:bg-[#FAFAF7] ${selectionMode ? "" : "cursor-pointer"}`}>
+                  {selectionMode ? (
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(req.id)}
+                        onChange={() => toggleRequisitionSelection(req.id)}
+                        onClick={(event) => event.stopPropagation()}
+                        className="h-4 w-4 rounded border-[#DDD7D1] text-[#B45309] focus:ring-[#B45309]"
+                      />
+                    </td>
+                  ) : null}
                   <td className="whitespace-nowrap px-4 py-3">
                     <span className="font-bold text-[#B45309]">{req.folio}</span>
                   </td>
@@ -759,7 +832,16 @@ function RequisitionDetailModal({
           <p className="mt-2 text-sm font-semibold text-stone-500">{detail.location_name} · {detail.area_name ?? "Sin área"} · {formatDateTime(detail.created_at)}</p>
         </div>
         <div className="flex flex-wrap justify-start gap-2 md:justify-end">
-          <Button variant="secondary" onClick={() => openRequisitionPdf(detail)}>Generar PDF</Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              void downloadRequisitionPdf(detail).catch((pdfError) => {
+                setError(getErrorMessage(pdfError));
+              });
+            }}
+          >
+            Generar PDF
+          </Button>
           <Button variant="secondary" onClick={onClose}>Cerrar</Button>
         </div>
       </div>
@@ -1148,133 +1230,388 @@ function detailItemToDraftItem(item: SupplyRequisitionItem, product?: ProductRow
   };
 }
 
-function openRequisitionPdf(detail: SupplyRequisitionDetail) {
-  const printWindow = openBlankPdfWindow();
-  if (!printWindow) {
-    throw new Error("No se pudo abrir la ventana del PDF. Revisa que el navegador permita ventanas emergentes.");
+const PDF_PALETTE = {
+  border: [237, 232, 227] as const,
+  dark: [28, 25, 23] as const,
+  ink: [68, 64, 60] as const,
+  muted: [120, 113, 108] as const,
+  paper: [245, 241, 238] as const,
+  white: [255, 255, 255] as const,
+  accent: [180, 83, 9] as const,
+};
+
+const PDF_LAYOUT = {
+  footerHeight: 26,
+  margin: 36,
+  pageHeight: 792,
+  pageWidth: 612,
+};
+
+async function downloadRequisitionPdf(detail: SupplyRequisitionDetail) {
+  const doc = createLetterPdf();
+  const cursorY = renderPdfDocumentHeader(doc, detail.folio, `Sucursal ${detail.location_name}`);
+  await renderRequisitionPdfSection(doc, detail, cursorY, false);
+  renderPdfFooter(doc);
+  doc.save(`${sanitizeFilename(detail.folio)}.pdf`);
+}
+
+async function downloadGeneralRequisitionPdf(details: SupplyRequisitionDetail[]) {
+  const doc = createLetterPdf();
+  let cursorY = renderPdfDocumentHeader(doc, "Requisiciones Generales", `${details.length} requisiciones seleccionadas`, `${groupByLocation(details).length} sucursales`);
+  let currentLocation = "";
+
+  for (const detail of sortRequisitionsForPdf(details)) {
+    if (detail.location_name !== currentLocation) {
+      currentLocation = detail.location_name;
+      cursorY = ensurePdfSpace(doc, cursorY, 34);
+      doc.setFillColor(...PDF_PALETTE.dark);
+      doc.roundedRect(PDF_LAYOUT.margin, cursorY, getPdfContentWidth(), 22, 6, 6, "F");
+      doc.setTextColor(...PDF_PALETTE.white);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.text(currentLocation, PDF_LAYOUT.margin + 12, cursorY + 14);
+      cursorY += 30;
+    }
+
+    cursorY = await renderRequisitionPdfSection(doc, detail, cursorY, true);
   }
 
-  writeRequisitionPdf(printWindow, detail);
+  renderPdfFooter(doc);
+  doc.save(`requisiciones-generales-${formatTodayForFilename()}.pdf`);
 }
 
-function openBlankPdfWindow() {
-  return window.open("", "_blank", "width=980,height=1200");
+function createLetterPdf() {
+  return new jsPDF({
+    format: "letter",
+    orientation: "portrait",
+    unit: "pt",
+  });
 }
 
-function writeRequisitionPdf(printWindow: Window, detail: SupplyRequisitionDetail) {
-  printWindow.document.write(buildRequisitionPdfHtml(detail));
-  printWindow.document.close();
+function renderPdfDocumentHeader(doc: jsPDF, title: string, subtitle: string, meta?: string) {
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(...PDF_PALETTE.accent);
+  doc.text("KADMIEL SUPPLY OS", PDF_LAYOUT.margin, PDF_LAYOUT.margin);
+
+  doc.setFontSize(22);
+  doc.setTextColor(...PDF_PALETTE.dark);
+  doc.text(title, PDF_LAYOUT.margin, PDF_LAYOUT.margin + 24);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+  doc.setTextColor(...PDF_PALETTE.ink);
+  doc.text(subtitle, PDF_LAYOUT.margin, PDF_LAYOUT.margin + 42);
+
+  if (meta) {
+    doc.setTextColor(...PDF_PALETTE.muted);
+    doc.text(meta, PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin, PDF_LAYOUT.margin + 42, { align: "right" });
+  }
+
+  doc.setDrawColor(...PDF_PALETTE.border);
+  doc.line(PDF_LAYOUT.margin, PDF_LAYOUT.margin + 54, PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin, PDF_LAYOUT.margin + 54);
+
+  return PDF_LAYOUT.margin + 72;
 }
 
-function buildRequisitionPdfHtml(detail: SupplyRequisitionDetail) {
-  const rows = detail.items.map((item, index) => {
-    const image = item.image_url
-      ? `<img src="${escapeAttr(item.image_url)}" alt="${escapeAttr(item.product)}" />`
-      : `<div class="thumb-fallback">${escapeHtml(getInitials(item.product))}</div>`;
+async function renderRequisitionPdfSection(doc: jsPDF, detail: SupplyRequisitionDetail, startY: number, compact: boolean) {
+  let cursorY = ensurePdfSpace(doc, startY, compact ? 120 : 132);
+  const imageMap = await buildItemImageMap(detail.items);
 
-    return `
-      <tr>
-        <td class="center">${index + 1}</td>
-        <td class="image-cell">${image}</td>
-        <td>
-          <strong>${escapeHtml(item.product)}</strong>
-          <small>${escapeHtml(item.brand ?? "Sin marca")}</small>
-        </td>
-        <td>${escapeHtml(item.presentation ?? "Sin presentación")}</td>
-        <td class="right">${escapeHtml(formatNumber(item.quantity))}</td>
-        <td>${escapeHtml(item.unit ?? "unidad")}</td>
-        <td>${escapeHtml(item.notes ?? "")}</td>
-      </tr>
-    `;
-  }).join("");
+  doc.setDrawColor(...PDF_PALETTE.border);
+  doc.setFillColor(...PDF_PALETTE.white);
+  doc.roundedRect(PDF_LAYOUT.margin, cursorY, getPdfContentWidth(), 74, 10, 10, "FD");
 
-  return `<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8" />
-  <title>${escapeHtml(detail.folio)} · Kadmiel Supply OS</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { margin: 0; background: #f7f3ee; color: #1c1917; font-family: Arial, Helvetica, sans-serif; }
-    main { max-width: 960px; margin: 0 auto; padding: 32px; background: #fff; min-height: 100vh; }
-    header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #1c1917; padding-bottom: 18px; }
-    h1 { margin: 0; font-size: 30px; letter-spacing: 0; }
-    .brand { color: #b45309; font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
-    .status { display: inline-block; border-radius: 999px; background: #f5f1ee; padding: 6px 10px; font-size: 12px; font-weight: 800; }
-    .meta { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 22px 0; }
-    .box { border: 1px solid #ede8e3; border-radius: 8px; padding: 10px; }
-    .box span { display: block; color: #78716c; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-    .box strong { display: block; margin-top: 5px; font-size: 13px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 12px; }
-    th { background: #f5f1ee; color: #57534e; font-size: 10px; letter-spacing: .08em; text-align: left; text-transform: uppercase; }
-    th, td { border-bottom: 1px solid #ede8e3; padding: 10px; vertical-align: middle; }
-    td strong { display: block; font-size: 12px; }
-    td small { display: block; color: #78716c; margin-top: 3px; }
-    .center { text-align: center; }
-    .right { text-align: right; }
-    .image-cell { width: 76px; }
-    img, .thumb-fallback { width: 56px; height: 56px; border-radius: 8px; border: 1px solid #ede8e3; object-fit: cover; }
-    .thumb-fallback { display: flex; align-items: center; justify-content: center; background: #f5f1ee; color: #b45309; font-weight: 900; }
-    .notes { margin-top: 22px; border: 1px solid #ede8e3; border-radius: 8px; padding: 14px; min-height: 72px; }
-    .notes span { display: block; color: #78716c; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-    .notes p { margin: 8px 0 0; line-height: 1.5; }
-    footer { margin-top: 30px; color: #78716c; font-size: 11px; text-align: right; }
-    @media print {
-      body { background: #fff; }
-      main { padding: 0; max-width: none; }
-      .no-print { display: none; }
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <div>
-        <div class="brand">Kadmiel Supply OS</div>
-        <h1>${escapeHtml(detail.folio)}</h1>
-      </div>
-      <div>
-        <span class="status">${escapeHtml(STATUS[detail.status]?.label ?? detail.status)}</span>
-      </div>
-    </header>
-    <section class="meta">
-      <div class="box"><span>Sucursal</span><strong>${escapeHtml(detail.location_name)}</strong></div>
-      <div class="box"><span>Área</span><strong>${escapeHtml(detail.area_name ?? "Sin área")}</strong></div>
-      <div class="box"><span>Tipo</span><strong>${escapeHtml(STATUS[detail.request_type]?.label ?? detail.request_type)}</strong></div>
-      <div class="box"><span>Necesario para</span><strong>${escapeHtml(detail.needed_by ? formatDate(detail.needed_by) : "Sin fecha")}</strong></div>
-      <div class="box"><span>Creada</span><strong>${escapeHtml(formatDateTime(detail.created_at))}</strong></div>
-      <div class="box"><span>Partidas</span><strong>${escapeHtml(String(detail.items.length))}</strong></div>
-      <div class="box"><span>Solicitó</span><strong>${escapeHtml(detail.requested_by_name)}</strong></div>
-      <div class="box"><span>Aprobó</span><strong>${escapeHtml(detail.approved_by_name ?? "Pendiente")}</strong></div>
-      <div class="box"><span>Aprobación</span><strong>${escapeHtml(detail.approved_at ? formatDateTime(detail.approved_at) : "Pendiente")}</strong></div>
-    </section>
-    <table>
-      <thead>
-        <tr>
-          <th class="center">#</th>
-          <th>Imagen</th>
-          <th>Producto</th>
-          <th>Presentación</th>
-          <th class="right">Cantidad</th>
-          <th>Unidad</th>
-          <th>Notas</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <section class="notes">
-      <span>Notas generales</span>
-      <p>${escapeHtml(detail.notes ?? "Sin notas")}</p>
-    </section>
-    <footer>Generado el ${escapeHtml(formatDateTime(new Date().toISOString()))}</footer>
-  </main>
-  <script>
-    window.addEventListener('load', function () {
-      setTimeout(function () { window.print(); }, 350);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.setTextColor(...PDF_PALETTE.accent);
+  doc.text(detail.folio, PDF_LAYOUT.margin + 14, cursorY + 22);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(...PDF_PALETTE.ink);
+  doc.text(`${detail.requested_by_name} · ${detail.area_name ?? "Sin área"} · ${formatDateTime(detail.created_at)}`, PDF_LAYOUT.margin + 14, cursorY + 38);
+  doc.text(`Tipo ${STATUS[detail.request_type]?.label ?? detail.request_type} · Necesario para ${detail.needed_by ? formatDate(detail.needed_by) : "Sin fecha"}`, PDF_LAYOUT.margin + 14, cursorY + 52);
+
+  drawPdfStatusPill(doc, detail.status, PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin - 96, cursorY + 12, 82);
+
+  const metaEntries = [
+    ["Sucursal", detail.location_name],
+    ["Solicito", detail.requested_by_name],
+    ["Aprobo", detail.approved_by_name ?? "Pendiente"],
+    ["Aprobacion", detail.approved_at ? formatDateTime(detail.approved_at) : "Pendiente"],
+  ] as const;
+
+  cursorY += 88;
+  cursorY = renderPdfMetaBoxes(doc, metaEntries, cursorY);
+  cursorY += 10;
+  cursorY = renderPdfItemsTableHeader(doc, cursorY);
+
+  for (const [index, item] of detail.items.entries()) {
+    cursorY = await renderPdfItemRow(doc, item, imageMap.get(item.id) ?? null, index + 1, cursorY);
+  }
+
+  cursorY += 8;
+  cursorY = renderPdfNotes(doc, detail.notes ?? "Sin notas", cursorY);
+
+  return cursorY + (compact ? 12 : 18);
+}
+
+function renderPdfMetaBoxes(doc: jsPDF, entries: ReadonlyArray<readonly [string, string]>, cursorY: number) {
+  const gap = 8;
+  const width = (getPdfContentWidth() - gap * 3) / 4;
+  let x = PDF_LAYOUT.margin;
+
+  for (const [label, value] of entries) {
+    doc.setFillColor(...PDF_PALETTE.paper);
+    doc.setDrawColor(...PDF_PALETTE.border);
+    doc.roundedRect(x, cursorY, width, 38, 6, 6, "FD");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(...PDF_PALETTE.muted);
+    doc.text(label.toUpperCase(), x + 8, cursorY + 12);
+    doc.setFontSize(10);
+    doc.setTextColor(...PDF_PALETTE.dark);
+    doc.text(doc.splitTextToSize(value, width - 16), x + 8, cursorY + 26);
+    x += width + gap;
+  }
+
+  return cursorY + 46;
+}
+
+function renderPdfItemsTableHeader(doc: jsPDF, cursorY: number) {
+  doc.setFillColor(...PDF_PALETTE.paper);
+  doc.rect(PDF_LAYOUT.margin, cursorY, getPdfContentWidth(), 22, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(...PDF_PALETTE.muted);
+  const columns = getPdfColumns();
+
+  columns.forEach((column) => {
+    const x = PDF_LAYOUT.margin + column.x;
+    doc.text(column.label, x + (column.align === "right" ? column.width - 4 : 4), cursorY + 14, {
+      align: column.align,
+      maxWidth: column.width - 8,
     });
-  </script>
-</body>
-</html>`;
+  });
+
+  return cursorY + 22;
+}
+
+async function renderPdfItemRow(doc: jsPDF, item: SupplyRequisitionItem, imageDataUrl: string | null, index: number, cursorY: number) {
+  const columns = getPdfColumns();
+  const productText = [item.product, item.brand ? `Marca: ${item.brand}` : null].filter(Boolean).join("\n");
+  const presentationLines = doc.splitTextToSize(item.presentation ?? "Sin presentación", getColumn(columns, "presentation").width - 8);
+  const productLines = doc.splitTextToSize(productText, getColumn(columns, "product").width - 8);
+  const notesLines = doc.splitTextToSize(item.notes ?? "", getColumn(columns, "notes").width - 8);
+  const rowHeight = Math.max(54, productLines.length * 11 + 16, presentationLines.length * 11 + 16, Math.max(notesLines.length, 1) * 11 + 16);
+
+  cursorY = ensurePdfSpace(doc, cursorY, rowHeight + 12);
+  if (cursorY === PDF_LAYOUT.margin) {
+    cursorY = renderPdfItemsTableHeader(doc, cursorY);
+  }
+
+  doc.setDrawColor(...PDF_PALETTE.border);
+  doc.line(PDF_LAYOUT.margin, cursorY + rowHeight, PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin, cursorY + rowHeight);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(...PDF_PALETTE.ink);
+
+  drawPdfCellText(doc, String(index), columns, "index", cursorY, rowHeight, "center");
+  drawPdfImageCell(doc, imageDataUrl, item.product, columns, cursorY, rowHeight);
+  drawPdfCellText(doc, productLines, columns, "product", cursorY, rowHeight);
+  drawPdfCellText(doc, presentationLines, columns, "presentation", cursorY, rowHeight);
+  drawPdfCellText(doc, formatNumber(item.quantity), columns, "quantity", cursorY, rowHeight, "right");
+  drawPdfCellText(doc, item.unit ?? "unidad", columns, "unit", cursorY, rowHeight);
+  drawPdfCellText(doc, notesLines.length > 0 ? notesLines : " ", columns, "notes", cursorY, rowHeight);
+
+  return cursorY + rowHeight;
+}
+
+function renderPdfNotes(doc: jsPDF, notes: string, cursorY: number) {
+  const lines = doc.splitTextToSize(notes, getPdfContentWidth() - 24);
+  const height = Math.max(48, lines.length * 11 + 22);
+  cursorY = ensurePdfSpace(doc, cursorY, height + 8);
+
+  doc.setFillColor(...PDF_PALETTE.paper);
+  doc.setDrawColor(...PDF_PALETTE.border);
+  doc.roundedRect(PDF_LAYOUT.margin, cursorY, getPdfContentWidth(), height, 8, 8, "FD");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(...PDF_PALETTE.muted);
+  doc.text("NOTAS GENERALES", PDF_LAYOUT.margin + 12, cursorY + 14);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(...PDF_PALETTE.ink);
+  doc.text(lines, PDF_LAYOUT.margin + 12, cursorY + 30);
+
+  return cursorY + height;
+}
+
+function ensurePdfSpace(doc: jsPDF, cursorY: number, neededHeight: number) {
+  const limit = PDF_LAYOUT.pageHeight - PDF_LAYOUT.margin - PDF_LAYOUT.footerHeight;
+  if (cursorY + neededHeight <= limit) return cursorY;
+
+  doc.addPage("letter", "portrait");
+  return PDF_LAYOUT.margin;
+}
+
+function renderPdfFooter(doc: jsPDF, skipPageNumber = false) {
+  const pageCount = doc.getNumberOfPages();
+  const pageIndex = doc.getCurrentPageInfo().pageNumber;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(...PDF_PALETTE.muted);
+  doc.text(`Generado ${formatDateTime(new Date().toISOString())}`, PDF_LAYOUT.margin, PDF_LAYOUT.pageHeight - 14);
+  if (!skipPageNumber) {
+    doc.text(`Página ${pageIndex} de ${pageCount}`, PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin, PDF_LAYOUT.pageHeight - 14, { align: "right" });
+  }
+}
+
+function getPdfContentWidth() {
+  return PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin * 2;
+}
+
+function getPdfColumns() {
+  return [
+    { key: "index", label: "#", x: 0, width: 22, align: "center" as const },
+    { key: "image", label: "Imagen", x: 26, width: 44, align: "left" as const },
+    { key: "product", label: "Producto", x: 74, width: 158, align: "left" as const },
+    { key: "presentation", label: "Presentacion", x: 236, width: 92, align: "left" as const },
+    { key: "quantity", label: "Cantidad", x: 332, width: 46, align: "right" as const },
+    { key: "unit", label: "Unidad", x: 382, width: 52, align: "left" as const },
+    { key: "notes", label: "Notas", x: 438, width: 98, align: "left" as const },
+  ];
+}
+
+function getColumn(columns: ReturnType<typeof getPdfColumns>, key: string) {
+  const column = columns.find((entry) => entry.key === key);
+  if (!column) throw new Error(`No se encontró la columna ${key}`);
+  return column;
+}
+
+function drawPdfCellText(
+  doc: jsPDF,
+  value: string | string[],
+  columns: ReturnType<typeof getPdfColumns>,
+  key: string,
+  cursorY: number,
+  rowHeight: number,
+  align: "left" | "center" | "right" = "left",
+) {
+  const column = getColumn(columns, key);
+  const x = PDF_LAYOUT.margin + column.x;
+  const lines = Array.isArray(value) ? value : [value];
+  const top = cursorY + 14;
+  const anchorX = align === "right" ? x + column.width - 4 : align === "center" ? x + column.width / 2 : x + 4;
+  doc.text(lines, anchorX, top, { align, baseline: "top", maxWidth: column.width - 8 });
+}
+
+function drawPdfImageCell(
+  doc: jsPDF,
+  imageDataUrl: string | null,
+  productName: string,
+  columns: ReturnType<typeof getPdfColumns>,
+  cursorY: number,
+  rowHeight: number,
+) {
+  const column = getColumn(columns, "image");
+  const boxSize = 32;
+  const x = PDF_LAYOUT.margin + column.x + 6;
+  const y = cursorY + Math.max(8, (rowHeight - boxSize) / 2);
+
+  doc.setDrawColor(...PDF_PALETTE.border);
+  doc.setFillColor(...PDF_PALETTE.paper);
+  doc.roundedRect(x, y, boxSize, boxSize, 5, 5, "FD");
+
+  if (imageDataUrl) {
+    doc.addImage(imageDataUrl, inferPdfImageFormat(imageDataUrl), x, y, boxSize, boxSize);
+    return;
+  }
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(...PDF_PALETTE.accent);
+  doc.text(getInitials(productName), x + boxSize / 2, y + 20, { align: "center" });
+}
+
+function drawPdfStatusPill(doc: jsPDF, status: string, x: number, y: number, width: number) {
+  const style = STATUS[status] ?? { label: humanize(status), className: "" };
+  doc.setFillColor(...PDF_PALETTE.paper);
+  doc.roundedRect(x, y, width, 22, 11, 11, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(...PDF_PALETTE.dark);
+  doc.text(style.label, x + width / 2, y + 14, { align: "center" });
+}
+
+async function buildItemImageMap(items: SupplyRequisitionItem[]) {
+  const entries = await Promise.all(
+    items.map(async (item) => [item.id, await loadImageDataUrl(item.image_url)] as const),
+  );
+  return new Map(entries);
+}
+
+async function loadImageDataUrl(imageUrl: string | null) {
+  if (!imageUrl) return null;
+
+  try {
+    const response = await fetch(imageUrl);
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return await blobToDataUrl(blob);
+  } catch {
+    return null;
+  }
+}
+
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("No se pudo convertir la imagen."));
+    };
+    reader.onerror = () => reject(new Error("No se pudo leer la imagen."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function inferPdfImageFormat(dataUrl: string) {
+  if (dataUrl.startsWith("data:image/png")) return "PNG";
+  if (dataUrl.startsWith("data:image/webp")) return "WEBP";
+  return "JPEG";
+}
+
+function sortRequisitionsForPdf(details: SupplyRequisitionDetail[]) {
+  return details.toSorted(
+    (left, right) => left.location_name.localeCompare(right.location_name, APP_LOCALE) || left.folio.localeCompare(right.folio, APP_LOCALE),
+  );
+}
+
+function groupByLocation(details: SupplyRequisitionDetail[]) {
+  return Array.from(new Set(details.map((detail) => detail.location_name)));
+}
+
+function sanitizeFilename(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9-_]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+}
+
+function formatTodayForFilename() {
+  return new Intl.DateTimeFormat("sv-SE", {
+    timeZone: APP_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 function CatalogView({ products }: { products: ProductRow[] }) {
@@ -1683,23 +2020,6 @@ function getInitials(value: string) {
 
 function isIsoDateOnly(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, (character) => {
-    const entities: Record<string, string> = {
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    };
-    return entities[character];
-  });
-}
-
-function escapeAttr(value: string) {
-  return escapeHtml(value).replace(/`/g, "&#96;");
 }
 
 function getErrorMessage(error: unknown) {
