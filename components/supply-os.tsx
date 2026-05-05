@@ -23,6 +23,7 @@ type ViewId =
 type UserRoleName = "super_admin" | "branch_admin" | "operative" | "app_user";
 type RequisitionRequestType = "ordinaria" | "urgente" | "programada";
 type RequisitionStatus = "pendiente" | "aprobado" | "rechazado" | "completado" | "cancelado";
+type PurchaseOrderStatus = "pendiente" | "urgente" | "aprobado" | "completado" | "cancelado" | "parcial";
 
 type UserRole = {
   role: UserRoleName;
@@ -42,6 +43,7 @@ type ProductRow = {
   product: string;
   unit: string | null;
   unit_price: number | string | null;
+  total_price: number | string | null;
   brand: string | null;
   presentation: string | null;
   image_url: string | null;
@@ -81,6 +83,7 @@ type SupplyRequisition = {
   requested_by_name: string;
   created_at: string;
   items_count: number;
+  estimated_total: number | string;
 };
 
 type SupplyRequisitionItem = {
@@ -94,6 +97,8 @@ type SupplyRequisitionItem = {
   unit: string | null;
   notes: string | null;
   unit_price: number | string | null;
+  total_price: number | string | null;
+  line_total: number | string;
   almacen: string | null;
 };
 
@@ -101,6 +106,36 @@ type SupplyRequisitionDetail = SupplyRequisition & {
   approved_by: string | null;
   approved_by_name: string | null;
   approved_at: string | null;
+  updated_at: string;
+  items: SupplyRequisitionItem[];
+};
+
+type PurchaseOrderRow = {
+  id: string;
+  folio: string;
+  requisition_id: string;
+  requisition_folio: string;
+  location_id: string;
+  location_name: string;
+  request_type: RequisitionRequestType;
+  requisition_status: RequisitionStatus;
+  status: PurchaseOrderStatus;
+  needed_by: string | null;
+  notes: string | null;
+  requested_by: string;
+  requested_by_name: string;
+  approved_by: string | null;
+  approved_by_name: string | null;
+  approved_at: string | null;
+  created_at: string;
+  items_count: number;
+  estimated_total: number | string;
+};
+
+type PurchaseOrderDetail = PurchaseOrderRow & {
+  area_id: string | null;
+  area_name: string | null;
+  requisition_approved_at: string | null;
   updated_at: string;
   items: SupplyRequisitionItem[];
 };
@@ -149,14 +184,16 @@ const REQUISITION_STATUS_OPTIONS: Array<[RequisitionStatus, string]> = [
   ["cancelado", "Cancelado"],
 ];
 
+const PURCHASE_ORDER_STATUS_OPTIONS: Array<[PurchaseOrderStatus, string]> = [
+  ["pendiente", "Pendiente"],
+  ["urgente", "Urgente"],
+  ["aprobado", "Aprobada"],
+  ["completado", "Completada"],
+  ["cancelado", "Cancelada"],
+];
+
 const APP_LOCALE = "es-MX";
 const APP_TIME_ZONE = "America/Mexico_City";
-
-const SAMPLE_COMPRAS: SampleRecord[] = [
-  { folio: "OC-001", proveedor: "Harinera del Bajío", sucursal: "Teran", monto: 4200, estado: "pendiente" },
-  { folio: "OC-002", proveedor: "Lácteos San Juan", sucursal: "San Cristobal", monto: 8750, estado: "parcial" },
-  { folio: "OC-003", proveedor: "Café Origen MX", sucursal: "Aeropuerto", monto: 2100, estado: "completado" },
-];
 
 const SAMPLE_RECEPCIONES: SampleRecord[] = [
   { folio: "REC-001", proveedor: "Lácteos San Juan", sucursal: "San Cristobal", estado: "recibido", diferencias: false },
@@ -184,6 +221,7 @@ export default function SupplyOsApp() {
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [areas, setAreas] = useState<SupplyArea[]>([]);
   const [requisitions, setRequisitions] = useState<SupplyRequisition[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderRow[]>([]);
   const [view, setView] = useState<ViewId>("Dashboard");
   const [selectedLocation, setSelectedLocation] = useState("Todas");
   const [loading, setLoading] = useState(Boolean(supabase));
@@ -194,15 +232,16 @@ export default function SupplyOsApp() {
       if (!supabase) return;
       setDataError(null);
 
-      const [roleRes, locationRes, productRes, areaRes, reqRes] = await Promise.all([
+      const [roleRes, locationRes, productRes, areaRes, reqRes, purchaseRes] = await Promise.all([
         supabase.from("user_roles").select("role,sucursal,department,area").eq("user_id", activeUserId).limit(1),
         supabase.from("locations").select("id,name,address").in("name", ["Teran", "San Cristobal", "Aeropuerto"]).order("name"),
-        supabase.from("inventory").select("id,product,unit,unit_price,brand,presentation,image_url,almacen,location_id").order("product", { ascending: true }).limit(1000),
+        supabase.from("inventory").select("id,product,unit,unit_price,total_price,brand,presentation,image_url,almacen,location_id").order("product", { ascending: true }).limit(1000),
         supabase.rpc("list_abastecimiento_areas"),
         supabase.rpc("list_abastecimiento_requisitions"),
+        supabase.rpc("list_abastecimiento_purchase_orders"),
       ]);
 
-      const firstError = roleRes.error ?? locationRes.error ?? productRes.error ?? areaRes.error ?? reqRes.error;
+      const firstError = roleRes.error ?? locationRes.error ?? productRes.error ?? areaRes.error ?? reqRes.error ?? purchaseRes.error;
       if (firstError) setDataError(firstError.message);
 
       setRole((roleRes.data?.[0] as UserRole | undefined) ?? null);
@@ -210,6 +249,7 @@ export default function SupplyOsApp() {
       setProducts((productRes.data as ProductRow[] | null) ?? []);
       setAreas((areaRes.data as SupplyArea[] | null) ?? []);
       setRequisitions((reqRes.data as SupplyRequisition[] | null) ?? []);
+      setPurchaseOrders((purchaseRes.data as PurchaseOrderRow[] | null) ?? []);
     },
     [supabase],
   );
@@ -237,6 +277,7 @@ export default function SupplyOsApp() {
       if (!sessionUser) {
         setRole(null);
         setRequisitions([]);
+        setPurchaseOrders([]);
       }
     });
 
@@ -319,7 +360,13 @@ export default function SupplyOsApp() {
           {view === "Inventario" && <InventoryView products={products} selectedLocation={selectedLocation} />}
           {view === "Catalogo" && <CatalogView products={products} />}
           {view === "Compras" && (
-            <SimpleOpsView title="Compras y órdenes" subtitle="Órdenes de compra, proveedores y seguimiento" records={filterSample(SAMPLE_COMPRAS, selectedLocation, "sucursal")} columns={["folio", "proveedor", "sucursal", "monto", "estado"]} />
+            <PurchasesView
+              supabase={supabase}
+              purchaseOrders={filterByLocation(purchaseOrders, selectedLocation)}
+              role={role}
+              reload={() => loadWorkspace(user.id)}
+              selectedLocation={selectedLocation}
+            />
           )}
           {view === "Recepciones" && (
             <SimpleOpsView title="Recepción de mercancía" subtitle="Validación física y documental de entregas" records={filterSample(SAMPLE_RECEPCIONES, selectedLocation, "sucursal")} columns={["folio", "proveedor", "sucursal", "diferencias", "estado"]} />
@@ -620,7 +667,7 @@ function RequisitionsView({
           <Button onClick={() => setOpen(true)}>+ Nueva Requi</Button>
         </div>
       </div>
-      <Segmented value={filter} onChange={setFilter} options={[["todas", "Todas"], ["pendiente", "Pendientes"], ["urgente", "Urgentes"], ["aprobado", "Aprobadas"], ["completado", "Completadas"]]} />
+      <Segmented value={filter} onChange={setFilter} options={[["todas", "Todas"], ["pendiente", "Pendientes"], ["urgente", "Urgentes"], ["aprobado", "Aprobadas"], ["completado", "Completadas"], ["cancelado", "Canceladas"]]} />
       {detailError ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{detailError}</p> : null}
       <Card className="mt-5 p-0">
         <div className="overflow-x-auto">
@@ -735,6 +782,7 @@ function RequisitionDetailModal({
   const selectedDraftProduct = products.find((product) => product.id === draftProductId);
   const locationAreas = areas.filter((area) => area.location_id === locationId);
   const canEditContent = detail.status === "pendiente";
+  const statusLocked = detail.status === "cancelado";
   const canAddItem = Boolean(canEditContent && selectedDraftProduct && Number(draftQuantity) > 0);
 
   function updateItem(clientId: string, changes: Partial<Pick<RequisitionDraftItem, "quantity" | "notes">>) {
@@ -804,7 +852,7 @@ function RequisitionDetailModal({
   }
 
   async function saveStatus() {
-    if (!supabase || !canManageStatus || statusDraft === detail.status) return;
+    if (!supabase || !canManageStatus || statusLocked || statusDraft === detail.status) return;
     setStatusSaving(true);
     setError(null);
     const { data, error: statusError } = await supabase.rpc("update_abastecimiento_requisition_status", {
@@ -856,12 +904,16 @@ function RequisitionDetailModal({
       {canManageStatus ? (
         <div className="mt-4 grid items-end gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 md:grid-cols-[1fr_auto]">
           <Field label="Estado">
-            <select value={statusDraft} onChange={(event) => setStatusDraft(event.target.value as RequisitionStatus)} className="field-input">
+            <select disabled={statusLocked} value={statusDraft} onChange={(event) => setStatusDraft(event.target.value as RequisitionStatus)} className="field-input disabled:opacity-70">
               {REQUISITION_STATUS_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
           </Field>
-          <Button disabled={statusDraft === detail.status || statusSaving} onClick={saveStatus}>{statusSaving ? "Actualizando..." : "Actualizar estado"}</Button>
+          <Button disabled={statusLocked || statusDraft === detail.status || statusSaving} onClick={saveStatus}>{statusSaving ? "Actualizando..." : "Actualizar estado"}</Button>
         </div>
+      ) : null}
+
+      {statusLocked ? (
+        <p className="mt-4 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700">La requisición cancelada queda bloqueada por completo.</p>
       ) : null}
 
       {!canEditContent ? (
@@ -1221,6 +1273,7 @@ function detailItemToDraftItem(item: SupplyRequisitionItem, product?: ProductRow
       product: item.product,
       unit: item.unit,
       unit_price: item.unit_price,
+      total_price: item.total_price,
       brand: item.brand,
       presentation: item.presentation,
       image_url: item.image_url,
@@ -1245,6 +1298,14 @@ const PDF_LAYOUT = {
   margin: 36,
   pageHeight: 792,
   pageWidth: 612,
+};
+
+type PdfColumn = {
+  key: string;
+  label: string;
+  x: number;
+  width: number;
+  align: "left" | "center" | "right";
 };
 
 async function downloadRequisitionPdf(detail: SupplyRequisitionDetail) {
@@ -1280,12 +1341,111 @@ async function downloadGeneralRequisitionPdf(details: SupplyRequisitionDetail[])
   doc.save(`requisiciones-generales-${formatTodayForFilename()}.pdf`);
 }
 
+async function downloadPurchaseOrderPdf(detail: PurchaseOrderDetail) {
+  const doc = createLetterPdf();
+  let cursorY = renderPdfDocumentHeader(doc, `Orden de Compra ${detail.folio}`, `Requisición ${detail.requisition_folio} · ${detail.location_name}`, formatCurrency(getRequisitionTotal(detail)));
+  cursorY = renderPurchaseOrderSummary(doc, detail, cursorY);
+  cursorY = renderPurchaseOrderItemsHeader(doc, cursorY + 8);
+  const imageMap = await buildItemImageMap(detail.items);
+
+  for (const [index, item] of detail.items.entries()) {
+    cursorY = renderPurchaseOrderItemRow(doc, item, imageMap.get(item.id) ?? null, index + 1, cursorY);
+  }
+
+  cursorY = renderPurchaseOrderTotals(doc, detail, cursorY + 12);
+  renderPdfNotes(doc, detail.notes ?? "Sin notas", cursorY + 10);
+  renderPdfFooter(doc);
+  doc.save(`orden-compra-${sanitizeFilename(detail.folio)}.pdf`);
+}
+
 function createLetterPdf() {
   return new jsPDF({
     format: "letter",
     orientation: "portrait",
     unit: "pt",
   });
+}
+
+function renderPurchaseOrderSummary(doc: jsPDF, detail: PurchaseOrderDetail, cursorY: number) {
+  const entries = [
+    ["Sucursal", detail.location_name],
+    ["Solicito", detail.requested_by_name],
+    ["Estado", STATUS[detail.status]?.label ?? humanize(detail.status)],
+    ["Aprobacion", detail.approved_at ? formatDateTime(detail.approved_at) : "Pendiente"],
+  ] as const;
+
+  cursorY = renderPdfMetaBoxes(doc, entries, cursorY);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(...PDF_PALETTE.muted);
+  doc.text("Evaluación financiera: confirmar disponibilidad de fondos antes de completar la compra.", PDF_LAYOUT.margin, cursorY + 8);
+  return cursorY + 18;
+}
+
+function renderPurchaseOrderItemsHeader(doc: jsPDF, cursorY: number) {
+  cursorY = ensurePdfSpace(doc, cursorY, 26);
+  doc.setFillColor(...PDF_PALETTE.paper);
+  doc.rect(PDF_LAYOUT.margin, cursorY, getPdfContentWidth(), 22, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(...PDF_PALETTE.muted);
+
+  getPurchaseOrderColumns().forEach((column) => {
+    const x = PDF_LAYOUT.margin + column.x;
+    doc.text(column.label, x + (column.align === "right" ? column.width - 4 : 4), cursorY + 14, {
+      align: column.align,
+      maxWidth: column.width - 8,
+    });
+  });
+
+  return cursorY + 22;
+}
+
+function renderPurchaseOrderItemRow(doc: jsPDF, item: SupplyRequisitionItem, imageDataUrl: string | null, index: number, cursorY: number) {
+  const columns = getPurchaseOrderColumns();
+  const productText = [item.product, item.brand ? `Marca: ${item.brand}` : null].filter(Boolean).join("\n");
+  const productLines = doc.splitTextToSize(productText, getPurchaseOrderColumn(columns, "product").width - 8);
+  const presentationLines = doc.splitTextToSize(item.presentation ?? "Sin presentación", getPurchaseOrderColumn(columns, "presentation").width - 8);
+  const rowHeight = Math.max(54, productLines.length * 11 + 16, presentationLines.length * 11 + 16);
+
+  cursorY = ensurePdfSpace(doc, cursorY, rowHeight + 12);
+  if (cursorY === PDF_LAYOUT.margin) {
+    cursorY = renderPurchaseOrderItemsHeader(doc, cursorY);
+  }
+
+  doc.setDrawColor(...PDF_PALETTE.border);
+  doc.line(PDF_LAYOUT.margin, cursorY + rowHeight, PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin, cursorY + rowHeight);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(...PDF_PALETTE.ink);
+
+  drawPurchaseOrderCellText(doc, String(index), columns, "index", cursorY, rowHeight, "center");
+  drawPdfImageCell(doc, imageDataUrl, item.product, columns, cursorY, rowHeight);
+  drawPurchaseOrderCellText(doc, productLines, columns, "product", cursorY, rowHeight);
+  drawPurchaseOrderCellText(doc, presentationLines, columns, "presentation", cursorY, rowHeight);
+  drawPurchaseOrderCellText(doc, formatNumber(item.quantity), columns, "quantity", cursorY, rowHeight, "right");
+  drawPurchaseOrderCellText(doc, item.unit ?? "unidad", columns, "unit", cursorY, rowHeight);
+  drawPurchaseOrderCellText(doc, formatCurrency(getItemPurchasePrice(item)), columns, "price", cursorY, rowHeight, "right");
+  drawPurchaseOrderCellText(doc, formatCurrency(getItemLineTotal(item)), columns, "lineTotal", cursorY, rowHeight, "right");
+
+  return cursorY + rowHeight;
+}
+
+function renderPurchaseOrderTotals(doc: jsPDF, detail: { estimated_total?: number | string | null; items: SupplyRequisitionItem[] }, cursorY: number) {
+  cursorY = ensurePdfSpace(doc, cursorY, 48);
+  const width = 210;
+  const x = PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin - width;
+  doc.setFillColor(...PDF_PALETTE.paper);
+  doc.setDrawColor(...PDF_PALETTE.border);
+  doc.roundedRect(x, cursorY, width, 42, 8, 8, "FD");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(...PDF_PALETTE.muted);
+  doc.text("TOTAL ORDEN", x + 12, cursorY + 15);
+  doc.setFontSize(15);
+  doc.setTextColor(...PDF_PALETTE.dark);
+  doc.text(formatCurrency(getRequisitionTotal(detail)), x + width - 12, cursorY + 30, { align: "right" });
+  return cursorY + 42;
 }
 
 function renderPdfDocumentHeader(doc: jsPDF, title: string, subtitle: string, meta?: string) {
@@ -1456,14 +1616,16 @@ function ensurePdfSpace(doc: jsPDF, cursorY: number, neededHeight: number) {
   return PDF_LAYOUT.margin;
 }
 
-function renderPdfFooter(doc: jsPDF, skipPageNumber = false) {
+function renderPdfFooter(doc: jsPDF) {
   const pageCount = doc.getNumberOfPages();
-  const pageIndex = doc.getCurrentPageInfo().pageNumber;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
-  doc.setTextColor(...PDF_PALETTE.muted);
-  doc.text(`Generado ${formatDateTime(new Date().toISOString())}`, PDF_LAYOUT.margin, PDF_LAYOUT.pageHeight - 14);
-  if (!skipPageNumber) {
+  const generatedAt = `Generado ${formatDateTime(new Date().toISOString())}`;
+
+  for (let pageIndex = 1; pageIndex <= pageCount; pageIndex += 1) {
+    doc.setPage(pageIndex);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(...PDF_PALETTE.muted);
+    doc.text(generatedAt, PDF_LAYOUT.margin, PDF_LAYOUT.pageHeight - 14);
     doc.text(`Página ${pageIndex} de ${pageCount}`, PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin, PDF_LAYOUT.pageHeight - 14, { align: "right" });
   }
 }
@@ -1484,16 +1646,33 @@ function getPdfColumns() {
   ];
 }
 
-function getColumn(columns: ReturnType<typeof getPdfColumns>, key: string) {
+function getPurchaseOrderColumns(): PdfColumn[] {
+  return [
+    { key: "index", label: "#", x: 0, width: 20, align: "center" },
+    { key: "image", label: "Imagen", x: 24, width: 42, align: "left" },
+    { key: "product", label: "Producto", x: 70, width: 124, align: "left" },
+    { key: "presentation", label: "Presentacion", x: 198, width: 74, align: "left" },
+    { key: "quantity", label: "Cant.", x: 276, width: 42, align: "right" },
+    { key: "unit", label: "Unidad", x: 322, width: 44, align: "left" },
+    { key: "price", label: "Precio", x: 370, width: 76, align: "right" },
+    { key: "lineTotal", label: "Importe", x: 450, width: 86, align: "right" },
+  ];
+}
+
+function getColumn(columns: PdfColumn[], key: string) {
   const column = columns.find((entry) => entry.key === key);
   if (!column) throw new Error(`No se encontró la columna ${key}`);
   return column;
 }
 
+function getPurchaseOrderColumn(columns: PdfColumn[], key: string) {
+  return getColumn(columns, key);
+}
+
 function drawPdfCellText(
   doc: jsPDF,
   value: string | string[],
-  columns: ReturnType<typeof getPdfColumns>,
+  columns: PdfColumn[],
   key: string,
   cursorY: number,
   rowHeight: number,
@@ -1507,11 +1686,23 @@ function drawPdfCellText(
   doc.text(lines, anchorX, top, { align, baseline: "top", maxWidth: column.width - 8 });
 }
 
+function drawPurchaseOrderCellText(
+  doc: jsPDF,
+  value: string | string[],
+  columns: PdfColumn[],
+  key: string,
+  cursorY: number,
+  rowHeight: number,
+  align: "left" | "center" | "right" = "left",
+) {
+  drawPdfCellText(doc, value, columns, key, cursorY, rowHeight, align);
+}
+
 function drawPdfImageCell(
   doc: jsPDF,
   imageDataUrl: string | null,
   productName: string,
-  columns: ReturnType<typeof getPdfColumns>,
+  columns: PdfColumn[],
   cursorY: number,
   rowHeight: number,
 ) {
@@ -1543,6 +1734,22 @@ function drawPdfStatusPill(doc: jsPDF, status: string, x: number, y: number, wid
   doc.setFontSize(9);
   doc.setTextColor(...PDF_PALETTE.dark);
   doc.text(style.label, x + width / 2, y + 14, { align: "center" });
+}
+
+function getItemPurchasePrice(item: SupplyRequisitionItem) {
+  return Number(item.total_price ?? item.unit_price ?? 0);
+}
+
+function getItemLineTotal(item: SupplyRequisitionItem) {
+  const explicit = Number(item.line_total ?? 0);
+  if (explicit > 0) return explicit;
+  return Number(item.quantity ?? 0) * getItemPurchasePrice(item);
+}
+
+function getRequisitionTotal(detail: { estimated_total?: number | string | null; items: SupplyRequisitionItem[] }) {
+  const explicit = Number(detail.estimated_total ?? 0);
+  if (explicit > 0) return explicit;
+  return detail.items.reduce((sum, item) => sum + getItemLineTotal(item), 0);
 }
 
 async function buildItemImageMap(items: SupplyRequisitionItem[]) {
@@ -1660,6 +1867,168 @@ function InventoryView({ products, selectedLocation }: { products: ProductRow[];
             return String((product as unknown as Record<string, unknown>)[key] ?? "—");
           }}
         />
+      </Card>
+    </div>
+  );
+}
+
+function PurchasesView({
+  supabase,
+  purchaseOrders,
+  role,
+  reload,
+  selectedLocation,
+}: {
+  supabase: ReturnType<typeof createBrowserSupabaseClient>;
+  purchaseOrders: PurchaseOrderRow[];
+  role: UserRole | null;
+  reload: () => Promise<void>;
+  selectedLocation: string;
+}) {
+  const [filter, setFilter] = useState<PurchaseOrderStatus | "todas">("pendiente");
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [statusLoadingId, setStatusLoadingId] = useState<string | null>(null);
+  const [statusDrafts, setStatusDrafts] = useState<Record<string, PurchaseOrderStatus>>({});
+  const [error, setError] = useState<string | null>(null);
+  const canManagePurchases = role?.role === "super_admin" || role?.role === "branch_admin" || normalize(role?.department ?? "") === "contabilidad";
+  const visible = purchaseOrders.filter((order) => {
+    if (order.status === "cancelado") return false;
+    if (filter === "todas") return true;
+    return order.status === filter;
+  });
+  const pending = purchaseOrders.filter((order) => order.status === "pendiente");
+  const urgent = purchaseOrders.filter((order) => order.status === "urgente");
+  const approved = purchaseOrders.filter((order) => order.status === "aprobado");
+  const completed = purchaseOrders.filter((order) => order.status === "completado");
+  const visibleTotal = visible.reduce((sum, order) => sum + Number(order.estimated_total ?? 0), 0);
+
+  function getDraftStatus(order: PurchaseOrderRow) {
+    return statusDrafts[order.id] ?? order.status;
+  }
+
+  async function fetchDetail(purchaseOrderId: string) {
+    if (!supabase) throw new Error("Supabase no está configurado.");
+    const { data, error: detailError } = await supabase.rpc("get_abastecimiento_purchase_order", { p_purchase_order_id: purchaseOrderId });
+    if (detailError) throw detailError;
+    return data as PurchaseOrderDetail;
+  }
+
+  async function updateStatus(order: PurchaseOrderRow) {
+    const nextStatus = getDraftStatus(order);
+    if (!supabase || !canManagePurchases || nextStatus === order.status) return;
+    setStatusLoadingId(order.id);
+    setError(null);
+    try {
+      const { error: statusError } = await supabase.rpc("update_abastecimiento_purchase_order_status", {
+        p_purchase_order_id: order.id,
+        p_status: nextStatus,
+      });
+      if (statusError) throw statusError;
+      setStatusDrafts((current) => {
+        const next = { ...current };
+        delete next[order.id];
+        return next;
+      });
+      await reload();
+    } catch (purchaseError) {
+      setError(getErrorMessage(purchaseError));
+    } finally {
+      setStatusLoadingId(null);
+    }
+  }
+
+  async function generatePurchaseOrder(purchaseOrderId: string) {
+    setLoadingId(purchaseOrderId);
+    setError(null);
+    try {
+      const detail = await fetchDetail(purchaseOrderId);
+      if (detail.status !== "aprobado" && detail.status !== "completado") {
+        throw new Error("Solo las compras aprobadas o completadas pueden generar orden de compra.");
+      }
+      await downloadPurchaseOrderPdf(detail);
+    } catch (purchaseError) {
+      setError(getErrorMessage(purchaseError));
+    } finally {
+      setLoadingId(null);
+    }
+  }
+
+  return (
+    <div>
+      <PageHeader title="Compras y órdenes" subtitle={`Evaluación financiera · ${selectedLocation}`} />
+      <div className="mb-6 mt-6 grid gap-3 md:grid-cols-5">
+        <KpiCard label="Pendientes" value={pending.length} sub="por evaluar" accent />
+        <KpiCard label="Urgentes" value={urgent.length} sub="prioridad de compra" alert={urgent.length > 0} />
+        <KpiCard label="Aprobadas" value={approved.length} sub="con fondos" />
+        <KpiCard label="Completadas" value={completed.length} sub="cerradas" />
+        <KpiCard label="Valor filtrado" value={formatCurrency(visibleTotal)} sub="cantidad x precio total" />
+      </div>
+      <Segmented value={filter} onChange={(value) => setFilter(value as PurchaseOrderStatus | "todas")} options={[["pendiente", "Pendientes"], ["urgente", "Urgentes"], ["aprobado", "Aprobadas"], ["completado", "Completadas"], ["todas", "Todas"]]} />
+      {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
+      <Card className="mt-5 p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-[#EDE8E3]">
+                {["Orden", "Requi", "Fecha", "Sucursal", "Solicitó", "Items", "Valor", "Estado", "Acciones"].map((label) => (
+                  <th key={label} className="whitespace-nowrap px-4 py-3 text-[11px] font-bold uppercase tracking-[0.06em] text-stone-400">{label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((order) => {
+                const draftStatus = getDraftStatus(order);
+                const canDownload = order.status === "aprobado" || order.status === "completado";
+                return (
+                <tr key={order.id} className="border-b border-[#F5F1EE] transition hover:bg-[#FAFAF7]">
+                  <td className="whitespace-nowrap px-4 py-3 font-bold text-[#B45309]">{order.folio}</td>
+                  <td className="whitespace-nowrap px-4 py-3 font-semibold text-stone-700">{order.requisition_folio}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{formatDate(order.created_at)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{order.location_name}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{order.requested_by_name}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{order.items_count}</td>
+                  <td className="whitespace-nowrap px-4 py-3 font-bold text-stone-950">{formatCurrency(order.estimated_total)}</td>
+                  <td className="whitespace-nowrap px-4 py-3"><Badge status={order.status} /></td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {canManagePurchases ? (
+                        <>
+                          <select
+                            value={draftStatus}
+                            onChange={(event) => setStatusDrafts((current) => ({ ...current, [order.id]: event.target.value as PurchaseOrderStatus }))}
+                            disabled={statusLoadingId === order.id}
+                            className="field-input h-9 min-w-[130px] bg-white text-xs disabled:opacity-70"
+                          >
+                            {PURCHASE_ORDER_STATUS_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                          </select>
+                          <button
+                            type="button"
+                            disabled={draftStatus === order.status || statusLoadingId === order.id}
+                            onClick={() => void updateStatus(order)}
+                            className="rounded-lg border border-[#DDD7D1] px-3 py-1.5 text-xs font-bold text-stone-700 transition hover:bg-[#F5F1EE] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {statusLoadingId === order.id ? "Guardando..." : "Guardar"}
+                          </button>
+                        </>
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={!canDownload || loadingId === order.id}
+                        title={canDownload ? "Descargar orden de compra" : "Aprueba la compra para generar la orden"}
+                        onClick={() => void generatePurchaseOrder(order.id)}
+                        className="rounded-lg bg-[#1C1917] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#2D2926] disabled:cursor-not-allowed disabled:bg-stone-300"
+                      >
+                        {loadingId === order.id ? "Generando..." : "Orden PDF"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {visible.length === 0 ? <EmptyState message="No hay órdenes de compra en este filtro" /> : null}
       </Card>
     </div>
   );
