@@ -3,7 +3,7 @@
 import type { User } from "@supabase/supabase-js";
 import { jsPDF } from "jspdf";
 import type { FormEvent, ReactNode } from "react";
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   createBrowserSupabaseClient,
   isSupabaseConfigured,
@@ -24,6 +24,7 @@ type UserRoleName = "super_admin" | "branch_admin" | "operative" | "app_user";
 type RequisitionRequestType = "ordinaria" | "urgente" | "programada";
 type RequisitionStatus = "pendiente" | "aprobado" | "rechazado" | "completado" | "cancelado";
 type PurchaseOrderStatus = "pendiente" | "urgente" | "aprobado" | "completado" | "cancelado" | "parcial";
+type ReceivingStatus = "pendiente" | "recibida" | "en_almacen";
 
 type UserRole = {
   role: UserRoleName;
@@ -49,6 +50,16 @@ type ProductRow = {
   image_url: string | null;
   almacen: string | null;
   location_id: string | null;
+  category_id: string | null;
+  warehouse_id: string | null;
+  rack_id: string | null;
+  delicate_management: boolean | null;
+  location_ids: string[];
+};
+
+type InventoryLocationLink = {
+  inventory_id: string;
+  location_id: string;
 };
 
 type RequisitionDraftItem = {
@@ -115,7 +126,7 @@ type PurchaseOrderRow = {
   folio: string;
   requisition_id: string;
   requisition_folio: string;
-  location_id: string;
+  location_id: string | null;
   location_name: string;
   request_type: RequisitionRequestType;
   requisition_status: RequisitionStatus;
@@ -140,6 +151,174 @@ type PurchaseOrderDetail = PurchaseOrderRow & {
   items: SupplyRequisitionItem[];
 };
 
+type ReceivingOrderRow = {
+  receipt_id: string | null;
+  receipt_folio: string | null;
+  purchase_order_id: string;
+  purchase_folio: string;
+  requisition_id: string;
+  requisition_folio: string;
+  location_id: string;
+  location_name: string;
+  requested_by_name: string;
+  completed_at: string;
+  received_at: string | null;
+  stored_at?: string | null;
+  status: ReceivingStatus;
+  items_count: number;
+  differences_count: number;
+  total_ordered: number | string;
+  total_received: number | string;
+};
+
+type ReceivingItem = {
+  receipt_item_id: string | null;
+  purchase_order_item_id: string;
+  product_id: string;
+  product: string;
+  brand: string | null;
+  presentation: string | null;
+  image_url: string | null;
+  unit: string | null;
+  requisition_quantity: number | string;
+  purchased_quantity: number | string;
+  received_quantity: number | string;
+  quantity_difference: number | string;
+  lot_code: string | null;
+  expires_at: string | null;
+  unit_cost: number | string | null;
+  almacen: string | null;
+  warehouse_id: string | null;
+  warehouse_name: string | null;
+  warehouse_address: string | null;
+  rack_id: string | null;
+  rack_name: string | null;
+  rack_position: string | null;
+  storage_type: string | null;
+  category_id: string | null;
+  category_name: string | null;
+  delicate_management: boolean;
+  product_note: string | null;
+  description: string | null;
+};
+
+type ReceivingOrderDetail = ReceivingOrderRow & {
+  area_name: string | null;
+  notes: string | null;
+  items: ReceivingItem[];
+};
+
+type ReceivingDraftItem = Omit<ReceivingItem, "received_quantity" | "lot_code" | "expires_at"> & {
+  received_quantity: string;
+  lot_code: string;
+  expires_at: string;
+};
+
+type InventoryStoredRow = {
+  receipt_id: string;
+  receipt_item_id: string;
+  receipt_folio: string;
+  purchase_order_id: string;
+  purchase_folio: string;
+  requisition_id: string;
+  requisition_folio: string;
+  location_id: string;
+  location_name: string;
+  stored_at: string;
+  received_at: string;
+  product_id: string;
+  product: string;
+  brand: string | null;
+  presentation: string | null;
+  image_url: string | null;
+  unit: string | null;
+  received_quantity: number | string;
+  unit_cost: number | string | null;
+  total_cost: number | string;
+  lot_code: string | null;
+  expires_at: string | null;
+  almacen: string | null;
+  warehouse_id: string | null;
+  warehouse_name: string | null;
+  warehouse_address: string | null;
+  rack_id: string | null;
+  rack_name: string | null;
+  rack_position: string | null;
+  storage_type: string | null;
+  category_id: string | null;
+  category_name: string | null;
+  delicate_management: boolean;
+  product_note: string | null;
+};
+
+type InventoryReportFilters = {
+  categoryLabel: string;
+  dateFrom: string;
+  dateTo: string;
+  locationLabel: string;
+  rackLabel: string;
+  totalQuantity: number;
+  totalValue: number;
+  warehouseLabel: string;
+};
+
+type ProductionStockProduct = {
+  stock_lot_id: string | null;
+  finished_product_id: number;
+  product: string;
+  description: string | null;
+  packaging: string | null;
+  category: string | null;
+  subcategory: string | null;
+  image_url: string | null;
+  price: number | string;
+  location_id: string;
+  location_name: string;
+  production_date: string;
+  produced_quantity: number | string;
+};
+
+type ProductionBufferItem = {
+  product: ProductionStockProduct;
+  quantity: number;
+};
+
+type ProductionLotSummary = {
+  lot_id: string;
+  folio: string;
+  location_id: string;
+  location_name: string;
+  production_date: string;
+  notes: string | null;
+  created_by_name: string;
+  created_at: string;
+  items_count: number | string;
+  total_quantity: number | string;
+};
+
+type ProductionLotDetailItem = {
+  finished_product_id: number;
+  product: string;
+  description: string | null;
+  packaging: string | null;
+  category: string | null;
+  subcategory: string | null;
+  image_url: string | null;
+  price: number | string;
+  quantity: number | string;
+};
+
+type ProductionLotDetail = {
+  lot_id: string;
+  folio: string;
+  location_id: string;
+  location_name: string;
+  production_date: string;
+  notes: string | null;
+  created_at: string;
+  items: ProductionLotDetailItem[];
+};
+
 type SampleRecord = Record<string, string | number | boolean>;
 
 const NAV_ITEMS: Array<{ id: ViewId; label: string; icon: string; tag?: string }> = [
@@ -151,7 +330,7 @@ const NAV_ITEMS: Array<{ id: ViewId; label: string; icon: string; tag?: string }
   { id: "Traspasos", label: "Traspasos", icon: "M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" },
   { id: "Merma", label: "Merma", icon: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" },
   { id: "Catalogo", label: "Catálogo", icon: "M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" },
-  { id: "Produccion", label: "Producción", icon: "M17 8h1a4 4 0 0 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4ZM6 2v2M10 2v2M14 2v2", tag: "Operaciones Terán" },
+  { id: "Produccion", label: "Operaciones", icon: "M17 8h1a4 4 0 0 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4ZM6 2v2M10 2v2M14 2v2", tag: "Sucursal" },
 ];
 
 const STATUS: Record<string, { label: string; className: string }> = {
@@ -164,6 +343,10 @@ const STATUS: Record<string, { label: string; className: string }> = {
   en_transito: { label: "En tránsito", className: "bg-blue-100 text-blue-700" },
   rechazado: { label: "Rechazado", className: "bg-red-100 text-red-700" },
   cancelado: { label: "Cancelado", className: "bg-stone-200 text-stone-600" },
+  recibida: { label: "Recibida", className: "bg-blue-100 text-blue-700" },
+  en_almacen: { label: "En almacén", className: "bg-emerald-100 text-emerald-700" },
+  diferencia: { label: "Con diferencia", className: "bg-red-100 text-red-700" },
+  cuidado_especial: { label: "Cuidado especial", className: "bg-amber-100 text-amber-700" },
   ordinaria: { label: "Ordinaria", className: "bg-stone-100 text-stone-600" },
   programada: { label: "Programada", className: "bg-sky-100 text-sky-700" },
   caducidad: { label: "Caducidad", className: "bg-amber-100 text-amber-700" },
@@ -195,10 +378,10 @@ const PURCHASE_ORDER_STATUS_OPTIONS: Array<[PurchaseOrderStatus, string]> = [
 const APP_LOCALE = "es-MX";
 const APP_TIME_ZONE = "America/Mexico_City";
 
-const SAMPLE_RECEPCIONES: SampleRecord[] = [
-  { folio: "REC-001", proveedor: "Lácteos San Juan", sucursal: "San Cristobal", estado: "recibido", diferencias: false },
-  { folio: "REC-002", proveedor: "Harinera del Bajío", sucursal: "Teran", estado: "parcial", diferencias: true },
-  { folio: "REC-003", proveedor: "Café Origen MX", sucursal: "Aeropuerto", estado: "recibido", diferencias: false },
+const RECEIVING_STATUS_OPTIONS: Array<[ReceivingStatus, string]> = [
+  ["pendiente", "Pendiente"],
+  ["recibida", "Recibida"],
+  ["en_almacen", "En almacén"],
 ];
 
 const SAMPLE_TRASPASOS: SampleRecord[] = [
@@ -232,21 +415,31 @@ export default function SupplyOsApp() {
       if (!supabase) return;
       setDataError(null);
 
-      const [roleRes, locationRes, productRes, areaRes, reqRes, purchaseRes] = await Promise.all([
+      const [roleRes, locationRes, productRes, inventoryLocationRes, areaRes, reqRes, purchaseRes] = await Promise.all([
         supabase.from("user_roles").select("role,sucursal,department,area").eq("user_id", activeUserId).limit(1),
         supabase.from("locations").select("id,name,address").in("name", ["Teran", "San Cristobal", "Aeropuerto"]).order("name"),
-        supabase.from("inventory").select("id,product,unit,unit_price,total_price,brand,presentation,image_url,almacen,location_id").order("product", { ascending: true }).limit(1000),
+        supabase.from("inventory").select("id,product,unit_price,total_price,brand,presentation,image_url,almacen,location_id,category_id,warehouse_id,rack_id,delicate_management").order("product", { ascending: true }).limit(1000),
+        supabase.from("inventory_locations").select("inventory_id,location_id").limit(5000),
         supabase.rpc("list_abastecimiento_areas"),
         supabase.rpc("list_abastecimiento_requisitions"),
         supabase.rpc("list_abastecimiento_purchase_orders"),
       ]);
 
-      const firstError = roleRes.error ?? locationRes.error ?? productRes.error ?? areaRes.error ?? reqRes.error ?? purchaseRes.error;
+      const firstError = roleRes.error ?? locationRes.error ?? productRes.error ?? inventoryLocationRes.error ?? areaRes.error ?? reqRes.error ?? purchaseRes.error;
       if (firstError) setDataError(firstError.message);
+
+      const availabilityMap = new Map<string, string[]>();
+      ((inventoryLocationRes.data as InventoryLocationLink[] | null) ?? []).forEach((link) => {
+        const current = availabilityMap.get(link.inventory_id) ?? [];
+        availabilityMap.set(link.inventory_id, [...current, link.location_id]);
+      });
 
       setRole((roleRes.data?.[0] as UserRole | undefined) ?? null);
       setLocations((locationRes.data as LocationRow[] | null) ?? []);
-      setProducts((productRes.data as ProductRow[] | null) ?? []);
+      setProducts(((productRes.data as Omit<ProductRow, "location_ids">[] | null) ?? []).map((product) => ({
+        ...product,
+        location_ids: availabilityMap.get(product.id) ?? [],
+      })));
       setAreas((areaRes.data as SupplyArea[] | null) ?? []);
       setRequisitions((reqRes.data as SupplyRequisition[] | null) ?? []);
       setPurchaseOrders((purchaseRes.data as PurchaseOrderRow[] | null) ?? []);
@@ -357,7 +550,7 @@ export default function SupplyOsApp() {
               reload={() => loadWorkspace(user.id)}
             />
           )}
-          {view === "Inventario" && <InventoryView products={products} selectedLocation={selectedLocation} />}
+          {view === "Inventario" && <InventoryView supabase={supabase} selectedLocation={selectedLocation} />}
           {view === "Catalogo" && <CatalogView products={products} />}
           {view === "Compras" && (
             <PurchasesView
@@ -369,7 +562,10 @@ export default function SupplyOsApp() {
             />
           )}
           {view === "Recepciones" && (
-            <SimpleOpsView title="Recepción de mercancía" subtitle="Validación física y documental de entregas" records={filterSample(SAMPLE_RECEPCIONES, selectedLocation, "sucursal")} columns={["folio", "proveedor", "sucursal", "diferencias", "estado"]} />
+            <ReceiptsView
+              supabase={supabase}
+              selectedLocation={selectedLocation}
+            />
           )}
           {view === "Traspasos" && (
             <SimpleOpsView
@@ -382,7 +578,14 @@ export default function SupplyOsApp() {
           {view === "Merma" && (
             <SimpleOpsView title="Merma y caducidad" subtitle="Registro y análisis de pérdidas operativas" records={filterSample(SAMPLE_MERMA, selectedLocation, "sucursal")} columns={["folio", "sucursal", "insumo", "cantidad", "tipo", "valor"]} />
           )}
-          {view === "Produccion" && <ProductionView areas={areas.filter((area) => normalize(area.location_name) === "teran")} />}
+          {view === "Produccion" && (
+            <ProductionView
+              supabase={supabase}
+              locations={locations}
+              selectedLocation={selectedLocation}
+              role={role}
+            />
+          )}
         </main>
       </section>
     </div>
@@ -529,8 +732,8 @@ function Dashboard({
           <SectionHeader title="Alertas operativas" actionLabel="Ver inventario" onAction={() => onNav("Inventario")} />
           <div className="space-y-2">
             <AlertRow tone="red" message={`${pending.length} requisiciones pendientes de revisión`} />
-            <AlertRow tone="amber" message={`${products.filter((item) => Number(item.unit_price ?? 0) === 0).length} productos maestros sin precio unitario`} />
-            <AlertRow tone="amber" message={`${products.filter((item) => !item.location_id).length} productos sin sucursal asignada`} />
+            <AlertRow tone="amber" message={`${products.filter((item) => Number(item.unit_price ?? 0) === 0).length} productos maestros sin precio`} />
+            <AlertRow tone="amber" message={`${products.filter((item) => item.location_ids.length === 0).length} productos sin sucursal asignada`} />
           </div>
         </Card>
       </div>
@@ -779,7 +982,9 @@ function RequisitionDetailModal({
   const [saving, setSaving] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const selectedDraftProduct = products.find((product) => product.id === draftProductId);
+  const nextClientId = useRef(0);
+  const availableProducts = products.filter((product) => productIsAvailableForLocation(product, locationId));
+  const selectedDraftProduct = availableProducts.find((product) => product.id === draftProductId);
   const locationAreas = areas.filter((area) => area.location_id === locationId);
   const canEditContent = detail.status === "pendiente";
   const statusLocked = detail.status === "cancelado";
@@ -790,14 +995,22 @@ function RequisitionDetailModal({
   }
 
   function updateItemProduct(clientId: string, productId: string) {
-    const product = productMap.get(productId);
+    const product = availableProducts.find((availableProduct) => availableProduct.id === productId) ?? productMap.get(productId);
     if (!product) return;
     setItems((current) => current.map((item) => (item.clientId === clientId ? { ...item, productId, product } : item)));
   }
 
+  function handleLocationChange(nextLocationId: string) {
+    setLocationId(nextLocationId);
+    setAreaId("");
+    setDraftProductId("");
+    setItems((current) => current.filter((item) => productIsAvailableForLocation(item.product, nextLocationId)));
+  }
+
   function addItem() {
     if (!selectedDraftProduct || Number(draftQuantity) <= 0) return;
-    const clientId = globalThis.crypto?.randomUUID?.() ?? `${selectedDraftProduct.id}-${Date.now()}`;
+    nextClientId.current += 1;
+    const clientId = globalThis.crypto?.randomUUID?.() ?? `${selectedDraftProduct.id}-${nextClientId.current}`;
     setItems((current) => [
       ...current,
       {
@@ -832,7 +1045,7 @@ function RequisitionDetailModal({
       p_items: items.map((item) => ({
         product_id: item.productId,
         quantity: Number(item.quantity),
-        unit: item.product.unit ?? "",
+        unit: "",
         notes: item.notes,
       })),
       p_location_id: locationId,
@@ -896,7 +1109,7 @@ function RequisitionDetailModal({
 
       <div className="mt-5 grid gap-3 rounded-xl bg-[#FAFAF8] p-4 md:grid-cols-4">
         <KpiMini label="Partidas" value={items.length} />
-        <KpiMini label="Unidades" value={items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)} />
+        <KpiMini label="Cantidad total" value={items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)} />
         <KpiMini label="Necesario para" value={neededBy ? formatDate(neededBy) : "Sin fecha"} />
         <KpiMini label="Última edición" value={formatDateTime(detail.updated_at)} />
       </div>
@@ -922,7 +1135,7 @@ function RequisitionDetailModal({
 
       <div className="mt-4 grid gap-4 lg:grid-cols-4">
         <Field label="Sucursal">
-          <select disabled={!canEditContent} value={locationId} onChange={(event) => { setLocationId(event.target.value); setAreaId(""); }} className="field-input disabled:opacity-70">
+          <select disabled={!canEditContent} value={locationId} onChange={(event) => handleLocationChange(event.target.value)} className="field-input disabled:opacity-70">
             {locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
           </select>
         </Field>
@@ -960,7 +1173,7 @@ function RequisitionDetailModal({
                 <div className="min-w-0 flex-1">
                   {canEditContent ? (
                     <select value={item.productId} onChange={(event) => updateItemProduct(item.clientId, event.target.value)} className="field-input bg-white">
-                      {products.map((product) => <option key={product.id} value={product.id}>{product.product} {product.presentation ? `· ${product.presentation}` : ""}</option>)}
+                      {availableProducts.map((product) => <option key={product.id} value={product.id}>{product.product} {product.presentation ? `· ${product.presentation}` : ""}</option>)}
                     </select>
                   ) : (
                     <p className="truncate text-sm font-bold text-stone-950">{item.product.product}</p>
@@ -988,7 +1201,7 @@ function RequisitionDetailModal({
             <Field label="Agregar producto">
               <select value={draftProductId} onChange={(event) => setDraftProductId(event.target.value)} className="field-input bg-white">
                 <option value="">Seleccionar...</option>
-                {products.map((product) => <option key={product.id} value={product.id}>{product.product} {product.presentation ? `· ${product.presentation}` : ""}</option>)}
+                {availableProducts.map((product) => <option key={product.id} value={product.id}>{product.product} {product.presentation ? `· ${product.presentation}` : ""}</option>)}
               </select>
             </Field>
             <Field label="Cantidad">
@@ -1045,17 +1258,28 @@ function NewRequisitionModal({
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const nextClientId = useRef(0);
   const deferredProductSearch = useDeferredValue(productSearch);
-  const selectedProduct = products.find((product) => product.id === draftProductId);
+  const availableProducts = products.filter((product) => productIsAvailableForLocation(product, locationId));
+  const selectedProduct = availableProducts.find((product) => product.id === draftProductId);
   const locationAreas = areas.filter((area) => area.location_id === locationId);
-  const filteredProducts = products.filter((product) =>
+  const filteredProducts = availableProducts.filter((product) =>
     `${product.product} ${product.brand ?? ""} ${product.presentation ?? ""}`.toLowerCase().includes(deferredProductSearch.trim().toLowerCase()),
   );
   const canAddItem = Boolean(selectedProduct && Number(draftQuantity) > 0);
 
+  function handleLocationChange(nextLocationId: string) {
+    setLocationId(nextLocationId);
+    setAreaId("");
+    setProductSearch("");
+    setDraftProductId("");
+    setItems((current) => current.filter((item) => productIsAvailableForLocation(item.product, nextLocationId)));
+  }
+
   function addItem() {
     if (!selectedProduct || Number(draftQuantity) <= 0) return;
-    const clientId = globalThis.crypto?.randomUUID?.() ?? `${selectedProduct.id}-${Date.now()}`;
+    nextClientId.current += 1;
+    const clientId = globalThis.crypto?.randomUUID?.() ?? `${selectedProduct.id}-${nextClientId.current}`;
     setItems((current) => [
       ...current,
       {
@@ -1086,7 +1310,7 @@ function NewRequisitionModal({
       p_items: items.map((item) => ({
         product_id: item.productId,
         quantity: Number(item.quantity),
-        unit: item.product.unit ?? "",
+        unit: "",
         notes: item.notes,
       })),
       p_location_id: locationId,
@@ -1106,7 +1330,7 @@ function NewRequisitionModal({
     <Modal title="Nueva Requisición" onClose={onClose} maxWidthClass="max-w-5xl">
       <div className="grid gap-4 lg:grid-cols-4">
         <Field label="Sucursal">
-          <select value={locationId} onChange={(event) => { setLocationId(event.target.value); setAreaId(""); }} className="field-input">
+          <select value={locationId} onChange={(event) => handleLocationChange(event.target.value)} className="field-input">
             {locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
           </select>
         </Field>
@@ -1159,7 +1383,7 @@ function NewRequisitionModal({
       <div className="mt-4 rounded-xl border border-[#EDE8E3] bg-white">
         <div className="flex items-center justify-between border-b border-[#EDE8E3] px-4 py-3">
           <p className="text-sm font-extrabold text-stone-950">Productos agregados</p>
-          <span className="rounded-full bg-[#F5F1EE] px-2.5 py-1 text-xs font-bold text-stone-600">{items.length}</span>
+          <span className="rounded-full bg-[#F5F1EE] px-2.5 py-1 text-xs font-bold text-stone-600">{items.length} · {availableProducts.length} disponibles</span>
         </div>
         <div className="max-h-[260px] overflow-auto">
           {items.length === 0 ? (
@@ -1178,7 +1402,6 @@ function NewRequisitionModal({
                   </div>
                   <div className="text-left md:text-right">
                     <p className="text-sm font-extrabold text-[#B45309]">{formatNumber(item.quantity)}</p>
-                    <p className="text-xs font-semibold text-stone-500">{item.product.unit ?? "unidad"}</p>
                   </div>
                   <button type="button" aria-label={`Quitar ${item.product.product}`} onClick={() => removeItem(item.clientId)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#EDE8E3] text-xl leading-none text-stone-400 transition hover:bg-red-50 hover:text-red-700">
                     ×
@@ -1196,7 +1419,7 @@ function NewRequisitionModal({
 
       <div className="mt-4 grid gap-3 rounded-xl bg-[#FAFAF8] p-4 md:grid-cols-3">
         <KpiMini label="Partidas" value={items.length} />
-        <KpiMini label="Unidades solicitadas" value={items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)} />
+        <KpiMini label="Cantidad solicitada" value={items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)} />
         <KpiMini label="Sucursal" value={locations.find((location) => location.id === locationId)?.name ?? "Sin sucursal"} />
       </div>
       {error ? <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
@@ -1225,14 +1448,13 @@ function ProductPreview({ product }: { product: ProductRow | undefined }) {
         <p className="text-xs font-semibold text-stone-500">{product.presentation ?? "Sin presentación"}</p>
         <div className="flex flex-wrap gap-2 pt-2 text-[11px] font-bold text-stone-500">
           {product.brand ? <span className="rounded-full bg-[#F5F1EE] px-2.5 py-1">{product.brand}</span> : null}
-          {product.unit ? <span className="rounded-full bg-[#F5F1EE] px-2.5 py-1">{product.unit}</span> : null}
         </div>
       </div>
     </div>
   );
 }
 
-function ProductThumb({ product, size = "sm" }: { product: ProductRow; size?: "sm" | "lg" }) {
+function ProductThumb({ product, size = "sm" }: { product: { product: string; image_url: string | null }; size?: "sm" | "lg" }) {
   const sizeClass = size === "lg" ? "h-28 w-full rounded-none" : "h-14 w-14 rounded-lg";
   if (product.image_url) {
     return (
@@ -1250,6 +1472,10 @@ function ProductThumb({ product, size = "sm" }: { product: ProductRow; size?: "s
       {getInitials(product.product)}
     </div>
   );
+}
+
+function productIsAvailableForLocation(product: ProductRow, locationId: string) {
+  return product.location_ids.includes(locationId);
 }
 
 function KpiMini({ label, value }: { label: string; value: number | string }) {
@@ -1271,7 +1497,7 @@ function detailItemToDraftItem(item: SupplyRequisitionItem, product?: ProductRow
     product: product ?? {
       id: item.product_id,
       product: item.product,
-      unit: item.unit,
+      unit: null,
       unit_price: item.unit_price,
       total_price: item.total_price,
       brand: item.brand,
@@ -1279,7 +1505,21 @@ function detailItemToDraftItem(item: SupplyRequisitionItem, product?: ProductRow
       image_url: item.image_url,
       almacen: item.almacen,
       location_id: null,
+      category_id: null,
+      warehouse_id: null,
+      rack_id: null,
+      delicate_management: null,
+      location_ids: [],
     },
+  };
+}
+
+function receivingItemToDraft(item: ReceivingItem): ReceivingDraftItem {
+  return {
+    ...item,
+    expires_at: item.expires_at ?? "",
+    lot_code: item.lot_code ?? "",
+    received_quantity: String(item.received_quantity ?? ""),
   };
 }
 
@@ -1358,6 +1598,42 @@ async function downloadPurchaseOrderPdf(detail: PurchaseOrderDetail) {
   doc.save(`orden-compra-${sanitizeFilename(detail.folio)}.pdf`);
 }
 
+async function downloadStorageOrderPdf(detail: ReceivingOrderDetail) {
+  if (detail.status !== "recibida") {
+    throw new Error("Solo las recepciones en estado recibida pueden generar orden de almacenamiento.");
+  }
+
+  const doc = createLetterPdf();
+  const receiptLabel = detail.receipt_folio ?? detail.requisition_folio;
+  let cursorY = renderPdfDocumentHeader(doc, `Orden de Almacenamiento ${receiptLabel}`, `Requisición ${detail.requisition_folio} · OC ${detail.purchase_folio}`, detail.location_name);
+  cursorY = renderStorageOrderSummary(doc, detail, cursorY);
+  cursorY = renderStorageOrderItemsHeader(doc, cursorY + 8);
+  const imageMap = await buildReceivingItemImageMap(detail.items);
+
+  for (const [index, item] of detail.items.entries()) {
+    cursorY = renderStorageOrderItemRow(doc, item, imageMap.get(item.purchase_order_item_id) ?? null, index + 1, cursorY);
+  }
+
+  const notes = detail.notes?.trim() ? detail.notes : "Validar ubicación física, lote y caducidad antes de mover la recepción a En almacén.";
+  renderPdfNotes(doc, notes, cursorY + 10);
+  renderPdfFooter(doc);
+  doc.save(`orden-almacenamiento-${sanitizeFilename(receiptLabel)}.pdf`);
+}
+
+function downloadInventoryReportPdf(rows: InventoryStoredRow[], filters: InventoryReportFilters) {
+  const doc = createLetterPdf();
+  let cursorY = renderPdfDocumentHeader(doc, "Reporte de Inventario", `${filters.locationLabel} · ${rows.length} partidas`, formatCurrency(filters.totalValue));
+  cursorY = renderInventoryReportSummary(doc, filters, cursorY);
+  cursorY = renderInventoryReportHeader(doc, cursorY + 8);
+
+  for (const [index, row] of rows.entries()) {
+    cursorY = renderInventoryReportRow(doc, row, index + 1, cursorY);
+  }
+
+  renderPdfFooter(doc);
+  doc.save(`reporte-inventario-${sanitizeFilename(filters.locationLabel)}-${formatTodayForFilename()}.pdf`);
+}
+
 function createLetterPdf() {
   return new jsPDF({
     format: "letter",
@@ -1382,6 +1658,38 @@ function renderPurchaseOrderSummary(doc: jsPDF, detail: PurchaseOrderDetail, cur
   return cursorY + 18;
 }
 
+function renderStorageOrderSummary(doc: jsPDF, detail: ReceivingOrderDetail, cursorY: number) {
+  const entries = [
+    ["Sucursal", detail.location_name],
+    ["Solicito", detail.requested_by_name],
+    ["Recepcion", detail.received_at ? formatDateTime(detail.received_at) : "Pendiente"],
+    ["Estado", STATUS[detail.status]?.label ?? humanize(detail.status)],
+  ] as const;
+
+  cursorY = renderPdfMetaBoxes(doc, entries, cursorY);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(...PDF_PALETTE.muted);
+  doc.text("Instrucción: ubicar cada insumo en el almacén y rack definidos en el maestro de inventario.", PDF_LAYOUT.margin, cursorY + 8);
+  return cursorY + 18;
+}
+
+function renderInventoryReportSummary(doc: jsPDF, filters: InventoryReportFilters, cursorY: number) {
+  const entries = [
+    ["Periodo", `${filters.dateFrom || "Inicio"} a ${filters.dateTo || "Hoy"}`],
+    ["Almacen", filters.warehouseLabel],
+    ["Rack", filters.rackLabel],
+    ["Categoria", filters.categoryLabel],
+  ] as const;
+
+  cursorY = renderPdfMetaBoxes(doc, entries, cursorY);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(...PDF_PALETTE.muted);
+  doc.text(`Cantidad recibida: ${formatNumber(filters.totalQuantity)} · Valor estimado: ${formatCurrency(filters.totalValue)}`, PDF_LAYOUT.margin, cursorY + 8);
+  return cursorY + 18;
+}
+
 function renderPurchaseOrderItemsHeader(doc: jsPDF, cursorY: number) {
   cursorY = ensurePdfSpace(doc, cursorY, 26);
   doc.setFillColor(...PDF_PALETTE.paper);
@@ -1391,6 +1699,44 @@ function renderPurchaseOrderItemsHeader(doc: jsPDF, cursorY: number) {
   doc.setTextColor(...PDF_PALETTE.muted);
 
   getPurchaseOrderColumns().forEach((column) => {
+    const x = PDF_LAYOUT.margin + column.x;
+    doc.text(column.label, x + (column.align === "right" ? column.width - 4 : 4), cursorY + 14, {
+      align: column.align,
+      maxWidth: column.width - 8,
+    });
+  });
+
+  return cursorY + 22;
+}
+
+function renderStorageOrderItemsHeader(doc: jsPDF, cursorY: number) {
+  cursorY = ensurePdfSpace(doc, cursorY, 26);
+  doc.setFillColor(...PDF_PALETTE.paper);
+  doc.rect(PDF_LAYOUT.margin, cursorY, getPdfContentWidth(), 22, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(...PDF_PALETTE.muted);
+
+  getStorageOrderColumns().forEach((column) => {
+    const x = PDF_LAYOUT.margin + column.x;
+    doc.text(column.label, x + (column.align === "right" ? column.width - 4 : 4), cursorY + 14, {
+      align: column.align,
+      maxWidth: column.width - 8,
+    });
+  });
+
+  return cursorY + 22;
+}
+
+function renderInventoryReportHeader(doc: jsPDF, cursorY: number) {
+  cursorY = ensurePdfSpace(doc, cursorY, 26);
+  doc.setFillColor(...PDF_PALETTE.paper);
+  doc.rect(PDF_LAYOUT.margin, cursorY, getPdfContentWidth(), 22, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(...PDF_PALETTE.muted);
+
+  getInventoryReportColumns().forEach((column) => {
     const x = PDF_LAYOUT.margin + column.x;
     doc.text(column.label, x + (column.align === "right" ? column.width - 4 : 4), cursorY + 14, {
       align: column.align,
@@ -1424,9 +1770,89 @@ function renderPurchaseOrderItemRow(doc: jsPDF, item: SupplyRequisitionItem, ima
   drawPurchaseOrderCellText(doc, productLines, columns, "product", cursorY, rowHeight);
   drawPurchaseOrderCellText(doc, presentationLines, columns, "presentation", cursorY, rowHeight);
   drawPurchaseOrderCellText(doc, formatNumber(item.quantity), columns, "quantity", cursorY, rowHeight, "right");
-  drawPurchaseOrderCellText(doc, item.unit ?? "unidad", columns, "unit", cursorY, rowHeight);
   drawPurchaseOrderCellText(doc, formatCurrency(getItemPurchasePrice(item)), columns, "price", cursorY, rowHeight, "right");
   drawPurchaseOrderCellText(doc, formatCurrency(getItemLineTotal(item)), columns, "lineTotal", cursorY, rowHeight, "right");
+
+  return cursorY + rowHeight;
+}
+
+function renderStorageOrderItemRow(doc: jsPDF, item: ReceivingItem, imageDataUrl: string | null, index: number, cursorY: number) {
+  const columns = getStorageOrderColumns();
+  const productText = [item.product, item.brand ? `Marca: ${item.brand}` : null, item.presentation ?? "Sin presentacion"].filter(Boolean).join("\n");
+  const destinationText = [
+    item.warehouse_name ?? item.almacen ?? "Sin almacen",
+    item.rack_name ? `Rack: ${item.rack_name}` : "Sin rack",
+    item.rack_position ?? item.storage_type ?? null,
+  ].filter(Boolean).join("\n");
+  const careText = item.delicate_management
+    ? ["Cuidado especial", item.product_note ?? item.description ?? null].filter(Boolean).join("\n")
+    : "Normal";
+  const productLines = doc.splitTextToSize(productText, getColumn(columns, "product").width - 8);
+  const destinationLines = doc.splitTextToSize(destinationText, getColumn(columns, "destination").width - 8);
+  const careLines = doc.splitTextToSize(careText, getColumn(columns, "care").width - 8);
+  const rowHeight = Math.max(60, productLines.length * 11 + 16, destinationLines.length * 11 + 16, careLines.length * 11 + 16);
+
+  cursorY = ensurePdfSpace(doc, cursorY, rowHeight + 12);
+  if (cursorY === PDF_LAYOUT.margin) {
+    cursorY = renderStorageOrderItemsHeader(doc, cursorY);
+  }
+
+  doc.setDrawColor(...PDF_PALETTE.border);
+  doc.line(PDF_LAYOUT.margin, cursorY + rowHeight, PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin, cursorY + rowHeight);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(...PDF_PALETTE.ink);
+
+  drawPdfCellText(doc, String(index), columns, "index", cursorY, rowHeight, "center");
+  drawPdfImageCell(doc, imageDataUrl, item.product, columns, cursorY, rowHeight);
+  drawPdfCellText(doc, productLines, columns, "product", cursorY, rowHeight);
+  drawPdfCellText(doc, destinationLines, columns, "destination", cursorY, rowHeight);
+  drawPdfCellText(doc, formatNumber(item.received_quantity), columns, "quantity", cursorY, rowHeight, "right");
+  drawPdfCellText(doc, careLines, columns, "care", cursorY, rowHeight);
+
+  return cursorY + rowHeight;
+}
+
+function renderInventoryReportRow(doc: jsPDF, row: InventoryStoredRow, index: number, cursorY: number) {
+  const columns = getInventoryReportColumns();
+  const productText = [
+    row.product,
+    row.presentation ?? null,
+    row.category_name ? `Categoria: ${row.category_name}` : null,
+    row.delicate_management ? "Cuidado especial" : null,
+  ].filter(Boolean).join("\n");
+  const destinationText = [
+    row.warehouse_name ?? row.almacen ?? "Sin almacen",
+    row.rack_name ? `Rack: ${row.rack_name}` : "Sin rack",
+    row.rack_position ?? row.storage_type ?? null,
+    row.almacen ? `Tipo: ${row.almacen}` : null,
+  ].filter(Boolean).join("\n");
+  const trackingText = [
+    row.lot_code ? `Lote: ${row.lot_code}` : "Sin lote",
+    row.expires_at ? `Cad: ${formatDate(row.expires_at)}` : "Sin cad.",
+  ].join("\n");
+  const productLines = doc.splitTextToSize(productText, getColumn(columns, "product").width - 8);
+  const destinationLines = doc.splitTextToSize(destinationText, getColumn(columns, "destination").width - 8);
+  const trackingLines = doc.splitTextToSize(trackingText, getColumn(columns, "tracking").width - 8);
+  const rowHeight = Math.max(50, productLines.length * 10 + 14, destinationLines.length * 10 + 14, trackingLines.length * 10 + 14);
+
+  cursorY = ensurePdfSpace(doc, cursorY, rowHeight + 12);
+  if (cursorY === PDF_LAYOUT.margin) {
+    cursorY = renderInventoryReportHeader(doc, cursorY);
+  }
+
+  doc.setDrawColor(...PDF_PALETTE.border);
+  doc.line(PDF_LAYOUT.margin, cursorY + rowHeight, PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin, cursorY + rowHeight);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(...PDF_PALETTE.ink);
+
+  drawPdfCellText(doc, String(index), columns, "index", cursorY, rowHeight, "center");
+  drawPdfCellText(doc, productLines, columns, "product", cursorY, rowHeight);
+  drawPdfCellText(doc, destinationLines, columns, "destination", cursorY, rowHeight);
+  drawPdfCellText(doc, formatNumber(row.received_quantity), columns, "quantity", cursorY, rowHeight, "right");
+  drawPdfCellText(doc, trackingLines, columns, "tracking", cursorY, rowHeight);
+  drawPdfCellText(doc, formatCurrency(row.total_cost), columns, "value", cursorY, rowHeight, "right");
 
   return cursorY + rowHeight;
 }
@@ -1582,7 +2008,6 @@ async function renderPdfItemRow(doc: jsPDF, item: SupplyRequisitionItem, imageDa
   drawPdfCellText(doc, productLines, columns, "product", cursorY, rowHeight);
   drawPdfCellText(doc, presentationLines, columns, "presentation", cursorY, rowHeight);
   drawPdfCellText(doc, formatNumber(item.quantity), columns, "quantity", cursorY, rowHeight, "right");
-  drawPdfCellText(doc, item.unit ?? "unidad", columns, "unit", cursorY, rowHeight);
   drawPdfCellText(doc, notesLines.length > 0 ? notesLines : " ", columns, "notes", cursorY, rowHeight);
 
   return cursorY + rowHeight;
@@ -1638,11 +2063,10 @@ function getPdfColumns() {
   return [
     { key: "index", label: "#", x: 0, width: 22, align: "center" as const },
     { key: "image", label: "Imagen", x: 26, width: 44, align: "left" as const },
-    { key: "product", label: "Producto", x: 74, width: 158, align: "left" as const },
-    { key: "presentation", label: "Presentacion", x: 236, width: 92, align: "left" as const },
-    { key: "quantity", label: "Cantidad", x: 332, width: 46, align: "right" as const },
-    { key: "unit", label: "Unidad", x: 382, width: 52, align: "left" as const },
-    { key: "notes", label: "Notas", x: 438, width: 98, align: "left" as const },
+    { key: "product", label: "Producto", x: 74, width: 174, align: "left" as const },
+    { key: "presentation", label: "Presentacion", x: 252, width: 108, align: "left" as const },
+    { key: "quantity", label: "Cantidad", x: 364, width: 58, align: "right" as const },
+    { key: "notes", label: "Notas", x: 426, width: 110, align: "left" as const },
   ];
 }
 
@@ -1650,12 +2074,33 @@ function getPurchaseOrderColumns(): PdfColumn[] {
   return [
     { key: "index", label: "#", x: 0, width: 20, align: "center" },
     { key: "image", label: "Imagen", x: 24, width: 42, align: "left" },
-    { key: "product", label: "Producto", x: 70, width: 124, align: "left" },
-    { key: "presentation", label: "Presentacion", x: 198, width: 74, align: "left" },
-    { key: "quantity", label: "Cant.", x: 276, width: 42, align: "right" },
-    { key: "unit", label: "Unidad", x: 322, width: 44, align: "left" },
-    { key: "price", label: "Precio", x: 370, width: 76, align: "right" },
-    { key: "lineTotal", label: "Importe", x: 450, width: 86, align: "right" },
+    { key: "product", label: "Producto", x: 70, width: 138, align: "left" },
+    { key: "presentation", label: "Presentacion", x: 212, width: 88, align: "left" },
+    { key: "quantity", label: "Cant.", x: 304, width: 50, align: "right" },
+    { key: "price", label: "Precio", x: 358, width: 76, align: "right" },
+    { key: "lineTotal", label: "Importe", x: 438, width: 98, align: "right" },
+  ];
+}
+
+function getStorageOrderColumns(): PdfColumn[] {
+  return [
+    { key: "index", label: "#", x: 0, width: 20, align: "center" },
+    { key: "image", label: "Imagen", x: 24, width: 42, align: "left" },
+    { key: "product", label: "Producto", x: 70, width: 140, align: "left" },
+    { key: "destination", label: "Almacen / Rack", x: 214, width: 146, align: "left" },
+    { key: "quantity", label: "Cant.", x: 364, width: 54, align: "right" },
+    { key: "care", label: "Cuidado", x: 422, width: 114, align: "left" },
+  ];
+}
+
+function getInventoryReportColumns(): PdfColumn[] {
+  return [
+    { key: "index", label: "#", x: 0, width: 20, align: "center" },
+    { key: "product", label: "Producto", x: 24, width: 170, align: "left" },
+    { key: "destination", label: "Almacen / Rack", x: 198, width: 138, align: "left" },
+    { key: "quantity", label: "Cantidad", x: 340, width: 50, align: "right" },
+    { key: "tracking", label: "Lote / Cad.", x: 394, width: 78, align: "left" },
+    { key: "value", label: "Valor", x: 476, width: 60, align: "right" },
   ];
 }
 
@@ -1759,6 +2204,13 @@ async function buildItemImageMap(items: SupplyRequisitionItem[]) {
   return new Map(entries);
 }
 
+async function buildReceivingItemImageMap(items: ReceivingItem[]) {
+  const entries = await Promise.all(
+    items.map(async (item) => [item.purchase_order_item_id, await loadImageDataUrl(item.image_url)] as const),
+  );
+  return new Map(entries);
+}
+
 async function loadImageDataUrl(imageUrl: string | null) {
   if (!imageUrl) return null;
 
@@ -1803,6 +2255,19 @@ function groupByLocation(details: SupplyRequisitionDetail[]) {
   return Array.from(new Set(details.map((detail) => detail.location_name)));
 }
 
+function getUniqueIdOptions(values: Array<{ id: string | null; label: string | null }>, fallbackId = "sin_categoria", fallbackLabel = "Sin categoría") {
+  const options = new Map<string, string>();
+  values.forEach((value) => {
+    options.set(value.id ?? fallbackId, value.label?.trim() || fallbackLabel);
+  });
+  return Array.from(options, ([id, label]) => ({ id, label })).toSorted((left, right) => left.label.localeCompare(right.label, APP_LOCALE));
+}
+
+function getOptionLabel(options: Array<{ id: string; label: string }>, value: string, allLabel: string) {
+  if (value === "todos") return allLabel;
+  return options.find((option) => option.id === value)?.label ?? allLabel;
+}
+
 function sanitizeFilename(value: string) {
   return value
     .normalize("NFD")
@@ -1827,11 +2292,11 @@ function CatalogView({ products }: { products: ProductRow[] }) {
 
   return (
     <div>
-      <PageHeader title="Catálogo de insumos" subtitle="Maestro de productos, unidades y costos" />
+      <PageHeader title="Catálogo de insumos" subtitle="Maestro de productos y costos" />
       <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar insumo, marca o presentación..." className="field-input mb-5 mt-6 max-w-sm" />
       <Card className="p-0">
         <DataTable
-          columns={[["product", "Producto"], ["unit", "Unidad"], ["unit_price", "Precio"], ["brand", "Marca"], ["presentation", "Presentación"], ["almacen", "Almacén"]]}
+          columns={[["product", "Producto"], ["unit_price", "Precio"], ["brand", "Marca"], ["presentation", "Presentación"], ["almacen", "Almacén"]]}
           rows={filtered}
           renderCell={(key, product) => {
             if (key === "product") return <span className="font-semibold text-stone-950">{product.product}</span>;
@@ -1844,29 +2309,206 @@ function CatalogView({ products }: { products: ProductRow[] }) {
   );
 }
 
-function InventoryView({ products, selectedLocation }: { products: ProductRow[]; selectedLocation: string }) {
-  const scoped = products.filter((product) => selectedLocation === "Todas" || product.location_id);
-  const noPrice = scoped.filter((product) => Number(product.unit_price ?? 0) === 0);
-  const frio = scoped.filter((product) => normalize(product.almacen ?? "") === "frio");
+function InventoryView({
+  supabase,
+  selectedLocation,
+}: {
+  supabase: ReturnType<typeof createBrowserSupabaseClient>;
+  selectedLocation: string;
+}) {
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [warehouseFilter, setWarehouseFilter] = useState("todos");
+  const [rackFilter, setRackFilter] = useState("todos");
+  const [categoryFilter, setCategoryFilter] = useState("todos");
+  const [rows, setRows] = useState<InventoryStoredRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadRows = useCallback(async () => {
+    if (!supabase) return;
+    setLoading(true);
+    setError(null);
+    const { data, error: loadError } = await supabase.rpc("list_abastecimiento_inventory_items", {
+      p_date_from: dateFrom || null,
+      p_date_to: dateTo || null,
+    });
+    setLoading(false);
+
+    if (loadError) {
+      setError(loadError.message);
+      setRows([]);
+      return;
+    }
+
+    setRows((data as InventoryStoredRow[] | null) ?? []);
+  }, [dateFrom, dateTo, supabase]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void loadRows();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadRows]);
+
+  const scopedRows = filterByLocation(rows, selectedLocation);
+  const warehouseScopedRows = scopedRows.filter((row) => warehouseFilter === "todos" || (row.warehouse_id ?? "sin_almacen") === warehouseFilter);
+  const warehouseOptions = useMemo(
+    () => getUniqueIdOptions(
+      scopedRows.map((row) => ({ id: row.warehouse_id, label: row.warehouse_name ?? row.almacen })),
+      "sin_almacen",
+      "Sin almacén",
+    ),
+    [scopedRows],
+  );
+  const rackOptions = useMemo(
+    () => getUniqueIdOptions(
+      warehouseScopedRows.map((row) => ({ id: row.rack_id, label: row.rack_name ?? row.rack_position })),
+      "sin_rack",
+      "Sin rack",
+    ),
+    [warehouseScopedRows],
+  );
+  const categoryOptions = useMemo(() => getUniqueIdOptions(scopedRows.map((row) => ({ id: row.category_id, label: row.category_name }))), [scopedRows]);
+  const visible = scopedRows.filter((row) => {
+    const matchesWarehouse = warehouseFilter === "todos" || (row.warehouse_id ?? "sin_almacen") === warehouseFilter;
+    const matchesRack = rackFilter === "todos" || (row.rack_id ?? "sin_rack") === rackFilter;
+    const matchesCategory = categoryFilter === "todos" || (row.category_id ?? "sin_categoria") === categoryFilter;
+    return matchesWarehouse && matchesRack && matchesCategory;
+  });
+  const totalQuantity = visible.reduce((sum, row) => sum + Number(row.received_quantity ?? 0), 0);
+  const totalValue = visible.reduce((sum, row) => sum + Number(row.total_cost ?? 0), 0);
+  const specialCare = visible.filter((row) => row.delicate_management).length;
+
+  function generateInventoryReport() {
+    if (visible.length === 0) return;
+    setReportLoading(true);
+    setError(null);
+    try {
+      downloadInventoryReportPdf(visible, {
+        categoryLabel: getOptionLabel(categoryOptions, categoryFilter, "Todas"),
+        dateFrom,
+        dateTo,
+        locationLabel: selectedLocation,
+        rackLabel: getOptionLabel(rackOptions, rackFilter, "Todos"),
+        totalQuantity,
+        totalValue,
+        warehouseLabel: getOptionLabel(warehouseOptions, warehouseFilter, "Todos"),
+      });
+    } catch (reportError) {
+      setError(getErrorMessage(reportError));
+    } finally {
+      setReportLoading(false);
+    }
+  }
 
   return (
     <div>
-      <PageHeader title="Inventario y existencias" subtitle="Lectura inicial desde productos maestros" />
-      <div className="mb-6 mt-6 grid gap-3 md:grid-cols-3">
-        <KpiCard label="Productos visibles" value={scoped.length} />
-        <KpiCard label="Sin precio" value={noPrice.length} alert={noPrice.length > 0} />
-        <KpiCard label="Almacén frío" value={frio.length} accent />
+      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <PageHeader title="Inventario y existencias" subtitle={`Recepciones cerradas en almacén · ${selectedLocation}`} />
+        <Button variant="secondary" disabled={loading} onClick={() => void loadRows()}>{loading ? "Actualizando..." : "Actualizar"}</Button>
       </div>
-      <Card className="p-0">
-        <DataTable
-          columns={[["product", "Producto"], ["unit", "Unidad"], ["unit_price", "Precio"], ["almacen", "Almacén"], ["presentation", "Presentación"]]}
-          rows={scoped.slice(0, 40)}
-          renderCell={(key, product) => {
-            if (key === "product") return <span className="font-semibold text-stone-950">{product.product}</span>;
-            if (key === "unit_price") return formatCurrency(product.unit_price);
-            return String((product as unknown as Record<string, unknown>)[key] ?? "—");
-          }}
-        />
+
+      <div className="grid gap-3 md:grid-cols-4">
+        <KpiCard label="Partidas" value={visible.length} sub="en almacén" accent />
+        <KpiCard label="Cantidad recibida" value={formatNumber(totalQuantity)} />
+        <KpiCard label="Valor estimado" value={formatCurrency(totalValue)} />
+        <KpiCard label="Cuidado especial" value={specialCare} alert={specialCare > 0} />
+      </div>
+
+      <div className="mt-5 grid gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 md:grid-cols-2 xl:grid-cols-6 xl:items-end">
+        <Field label="Fecha inicial">
+          <input value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} type="date" className="field-input" />
+        </Field>
+        <Field label="Fecha final">
+          <input value={dateTo} onChange={(event) => setDateTo(event.target.value)} type="date" className="field-input" />
+        </Field>
+        <Field label="Almacén">
+          <select
+            value={warehouseFilter}
+            onChange={(event) => {
+              setWarehouseFilter(event.target.value);
+              setRackFilter("todos");
+            }}
+            className="field-input"
+          >
+            <option value="todos">Todos</option>
+            {warehouseOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Rack">
+          <select value={rackFilter} onChange={(event) => setRackFilter(event.target.value)} className="field-input">
+            <option value="todos">Todos</option>
+            {rackOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Categoría">
+          <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="field-input">
+            <option value="todos">Todas</option>
+            {categoryOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+          </select>
+        </Field>
+        <div className="mb-4 flex flex-col gap-2">
+          <Button disabled={visible.length === 0 || reportLoading} onClick={() => void generateInventoryReport()}>
+            {reportLoading ? "Generando..." : "Reporte PDF"}
+          </Button>
+          <div className="rounded-lg bg-[#FAFAF8] px-3 py-2 text-center text-xs font-bold text-stone-500">
+            {visible.length} de {scopedRows.length} partidas
+          </div>
+        </div>
+      </div>
+
+      {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
+
+      <Card className="mt-5 p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-[#EDE8E3]">
+                {["Ingreso", "Producto", "Sucursal", "Almacén", "Rack", "Categoría", "Recibido", "Lote", "Caducidad", "Cuidado", "Valor"].map((label) => (
+                  <th key={label} className="whitespace-nowrap px-4 py-3 text-[11px] font-bold uppercase tracking-[0.06em] text-stone-400">{label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((row) => (
+                <tr key={row.receipt_item_id} className="border-b border-[#F5F1EE] transition hover:bg-[#FAFAF7]">
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <p className="font-bold text-[#B45309]">{row.receipt_folio}</p>
+                    <p className="text-xs font-semibold text-stone-500">{formatDate(row.stored_at)}</p>
+                  </td>
+                  <td className="min-w-[280px] px-4 py-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <ProductThumb product={row} />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-stone-950">{row.product}</p>
+                        <p className="truncate text-xs font-semibold text-stone-500">{row.presentation ?? "Sin presentación"}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.location_name}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">
+                    <p className="font-semibold text-stone-800">{row.warehouse_name ?? row.almacen ?? "Sin almacén"}</p>
+                    <p className="text-xs text-stone-500">{row.almacen ?? "Sin tipo"}</p>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">
+                    <p className="font-semibold text-stone-800">{row.rack_name ?? "Sin rack"}</p>
+                    <p className="text-xs text-stone-500">{row.rack_position ?? row.storage_type ?? "—"}</p>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.category_name ?? "Sin categoría"}</td>
+                  <td className="whitespace-nowrap px-4 py-3 font-semibold text-stone-700">{formatNumber(row.received_quantity)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.lot_code || "—"}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.expires_at ? formatDate(row.expires_at) : "—"}</td>
+                  <td className="whitespace-nowrap px-4 py-3">{row.delicate_management ? <Badge status="cuidado_especial" /> : <span className="text-stone-400">Normal</span>}</td>
+                  <td className="whitespace-nowrap px-4 py-3 font-bold text-stone-950">{formatCurrency(row.total_cost)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {loading ? <EmptyState message="Cargando inventario..." /> : null}
+        {!loading && visible.length === 0 ? <EmptyState message="No hay partidas en almacén con estos filtros" /> : null}
       </Card>
     </div>
   );
@@ -2034,6 +2676,360 @@ function PurchasesView({
   );
 }
 
+function ReceiptsView({
+  supabase,
+  selectedLocation,
+}: {
+  supabase: ReturnType<typeof createBrowserSupabaseClient>;
+  selectedLocation: string;
+}) {
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [filter, setFilter] = useState<ReceivingStatus | "todas">("pendiente");
+  const [rows, setRows] = useState<ReceivingOrderRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
+  const [storagePdfLoadingId, setStoragePdfLoadingId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ReceivingOrderDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadRows = useCallback(async () => {
+    if (!supabase) return;
+    setLoading(true);
+    setError(null);
+    const { data, error: loadError } = await supabase.rpc("list_abastecimiento_receiving_orders", {
+      p_date_from: dateFrom || null,
+      p_date_to: dateTo || null,
+    });
+    setLoading(false);
+
+    if (loadError) {
+      setError(loadError.message);
+      setRows([]);
+      return;
+    }
+
+    setRows((data as ReceivingOrderRow[] | null) ?? []);
+  }, [dateFrom, dateTo, supabase]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void loadRows();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadRows]);
+
+  const scopedRows = filterByLocation(rows, selectedLocation);
+  const visible = scopedRows.filter((row) => filter === "todas" || row.status === filter);
+  const pending = scopedRows.filter((row) => row.status === "pendiente");
+  const received = scopedRows.filter((row) => row.status === "recibida");
+  const inWarehouse = scopedRows.filter((row) => row.status === "en_almacen");
+  const differences = scopedRows.reduce((sum, row) => sum + Number(row.differences_count ?? 0), 0);
+  const visiblePurchased = visible.reduce((sum, row) => sum + Number(row.total_ordered ?? 0), 0);
+  const visibleReceived = visible.reduce((sum, row) => sum + Number(row.total_received ?? 0), 0);
+
+  async function openDetail(purchaseOrderId: string) {
+    if (!supabase) return;
+    setDetailLoadingId(purchaseOrderId);
+    setError(null);
+    const { data, error: detailError } = await supabase.rpc("get_abastecimiento_receiving_order", {
+      p_purchase_order_id: purchaseOrderId,
+    });
+    setDetailLoadingId(null);
+
+    if (detailError) {
+      setError(detailError.message);
+      return;
+    }
+
+    setDetail(data as ReceivingOrderDetail);
+  }
+
+  async function generateStorageOrder(row: ReceivingOrderRow) {
+    if (!supabase) return;
+    if (row.status !== "recibida") {
+      setError("Solo las recepciones en estado recibida pueden generar orden de almacenamiento.");
+      return;
+    }
+
+    setStoragePdfLoadingId(row.purchase_order_id);
+    setError(null);
+    try {
+      const { data, error: detailError } = await supabase.rpc("get_abastecimiento_receiving_order", {
+        p_purchase_order_id: row.purchase_order_id,
+      });
+
+      if (detailError) throw detailError;
+      await downloadStorageOrderPdf(data as ReceivingOrderDetail);
+    } catch (pdfError) {
+      setError(getErrorMessage(pdfError));
+    } finally {
+      setStoragePdfLoadingId(null);
+    }
+  }
+
+  return (
+    <div>
+      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <PageHeader title="Recepción de mercancía" subtitle={`Requisiciones completadas · ${selectedLocation}`} />
+        <Button variant="secondary" disabled={loading} onClick={() => void loadRows()}>{loading ? "Actualizando..." : "Actualizar"}</Button>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-4">
+        <KpiCard label="Pendientes" value={pending.length} sub="sin recibir" accent />
+        <KpiCard label="Recibidas" value={received.length} sub="verificadas" />
+        <KpiCard label="En almacén" value={inWarehouse.length} sub="cerradas" />
+        <KpiCard label="Diferencias" value={differences} sub="partidas con variación" alert={differences > 0} />
+      </div>
+
+      <div className="mt-5 grid gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 lg:grid-cols-[160px_160px_1fr] lg:items-end">
+        <Field label="Fecha inicial">
+          <input value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} type="date" className="field-input" />
+        </Field>
+        <Field label="Fecha final">
+          <input value={dateTo} onChange={(event) => setDateTo(event.target.value)} type="date" className="field-input" />
+        </Field>
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <Segmented value={filter} onChange={(value) => setFilter(value as ReceivingStatus | "todas")} options={[["pendiente", "Pendientes"], ["recibida", "Recibidas"], ["en_almacen", "En almacén"], ["todas", "Todas"]]} />
+          <div className="rounded-lg bg-[#FAFAF8] px-3 py-2 text-xs font-bold text-stone-500">
+            Comprado {formatNumber(visiblePurchased)} · Recibido {formatNumber(visibleReceived)}
+          </div>
+        </div>
+      </div>
+
+      {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
+
+      <Card className="mt-5 p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-[#EDE8E3]">
+                {["Requi", "Orden", "Completada", "Sucursal", "Solicitó", "Items", "Recibido / comprado", "Diferencias", "Estado", "Acciones"].map((label) => (
+                  <th key={label} className="whitespace-nowrap px-4 py-3 text-[11px] font-bold uppercase tracking-[0.06em] text-stone-400">{label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((row) => (
+                <tr key={row.purchase_order_id} className="border-b border-[#F5F1EE] transition hover:bg-[#FAFAF7]">
+                  <td className="whitespace-nowrap px-4 py-3 font-bold text-[#B45309]">{row.requisition_folio}</td>
+                  <td className="whitespace-nowrap px-4 py-3 font-semibold text-stone-700">{row.purchase_folio}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{formatDate(row.completed_at)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.location_name}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.requested_by_name}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.items_count}</td>
+                  <td className="whitespace-nowrap px-4 py-3 font-semibold text-stone-700">{formatNumber(row.total_received)} / {formatNumber(row.total_ordered)}</td>
+                  <td className={`whitespace-nowrap px-4 py-3 font-bold ${Number(row.differences_count) > 0 ? "text-red-600" : "text-emerald-700"}`}>{row.differences_count}</td>
+                  <td className="whitespace-nowrap px-4 py-3"><Badge status={row.status} /></td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {row.status === "recibida" ? (
+                        <button
+                          type="button"
+                          disabled={storagePdfLoadingId === row.purchase_order_id}
+                          onClick={() => void generateStorageOrder(row)}
+                          className="rounded-lg border border-[#DDD7D1] bg-[#F5F1EE] px-3 py-1.5 text-xs font-bold text-stone-700 transition hover:bg-[#EDE8E3] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {storagePdfLoadingId === row.purchase_order_id ? "Generando..." : "Orden almacén"}
+                        </button>
+                      ) : null}
+                      <button type="button" onClick={() => void openDetail(row.purchase_order_id)} className="rounded-lg bg-[#1C1917] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#2D2926]">
+                        {detailLoadingId === row.purchase_order_id ? "Abriendo..." : row.status === "pendiente" ? "Recibir" : "Ver"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {loading ? <EmptyState message="Cargando recepciones..." /> : null}
+        {!loading && visible.length === 0 ? <EmptyState message="No hay requisiciones completadas en este rango" /> : null}
+      </Card>
+
+      {detail ? (
+        <ReceivingDetailModal
+          supabase={supabase}
+          detail={detail}
+          onClose={() => setDetail(null)}
+          onSaved={async (updatedDetail) => {
+            setDetail(updatedDetail);
+            await loadRows();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ReceivingDetailModal({
+  supabase,
+  detail,
+  onClose,
+  onSaved,
+}: {
+  supabase: ReturnType<typeof createBrowserSupabaseClient>;
+  detail: ReceivingOrderDetail;
+  onClose: () => void;
+  onSaved: (detail: ReceivingOrderDetail) => Promise<void>;
+}) {
+  const [status, setStatus] = useState<ReceivingStatus>(detail.status);
+  const [notes, setNotes] = useState(detail.notes ?? "");
+  const [items, setItems] = useState<ReceivingDraftItem[]>(() => detail.items.map(receivingItemToDraft));
+  const [saving, setSaving] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const locked = detail.status === "en_almacen";
+  const totalPurchased = items.reduce((sum, item) => sum + Number(item.purchased_quantity ?? 0), 0);
+  const totalReceived = items.reduce((sum, item) => sum + Number(item.received_quantity || 0), 0);
+  const differences = items.filter((item) => getReceivingDifference(item) !== 0).length;
+
+  function updateItem(purchaseOrderItemId: string, changes: Partial<Pick<ReceivingDraftItem, "received_quantity" | "lot_code" | "expires_at">>) {
+    setItems((current) => current.map((item) => (item.purchase_order_item_id === purchaseOrderItemId ? { ...item, ...changes } : item)));
+  }
+
+  function fillPurchasedQuantities() {
+    setItems((current) => current.map((item) => ({ ...item, received_quantity: String(item.purchased_quantity ?? 0) })));
+  }
+
+  async function saveReceipt() {
+    if (!supabase || locked) return;
+    if (items.some((item) => Number(item.received_quantity || 0) < 0)) {
+      setError("Las cantidades recibidas no pueden ser negativas.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    const { data, error: saveError } = await supabase.rpc("save_abastecimiento_receipt", {
+      p_items: items.map((item) => ({
+        expires_at: item.expires_at || null,
+        lot_code: item.lot_code.trim(),
+        purchase_order_item_id: item.purchase_order_item_id,
+        received_quantity: Number(item.received_quantity || 0),
+      })),
+      p_notes: notes.trim(),
+      p_purchase_order_id: detail.purchase_order_id,
+      p_status: status,
+    });
+    setSaving(false);
+
+    if (saveError) {
+      setError(saveError.message);
+      return;
+    }
+
+    await onSaved(data as ReceivingOrderDetail);
+  }
+
+  async function generateStorageOrder() {
+    if (detail.status !== "recibida") {
+      setError("Solo las recepciones en estado recibida pueden generar orden de almacenamiento.");
+      return;
+    }
+
+    setPdfLoading(true);
+    setError(null);
+    try {
+      await downloadStorageOrderPdf(detail);
+    } catch (pdfError) {
+      setError(getErrorMessage(pdfError));
+    } finally {
+      setPdfLoading(false);
+    }
+  }
+
+  return (
+    <Modal title={`Recepción ${detail.requisition_folio}`} onClose={onClose} maxWidthClass="max-w-7xl">
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge status={detail.status} />
+            {differences > 0 ? <Badge status="diferencia" /> : null}
+          </div>
+          <p className="mt-2 text-sm font-semibold text-stone-500">{detail.location_name} · {detail.area_name ?? "Sin área"} · OC {detail.purchase_folio}</p>
+        </div>
+        <div className="flex flex-wrap justify-start gap-2 md:justify-end">
+          <Button variant="secondary" onClick={onClose}>Cerrar</Button>
+          {detail.status === "recibida" ? <Button variant="secondary" disabled={pdfLoading} onClick={generateStorageOrder}>{pdfLoading ? "Generando..." : "Orden almacén PDF"}</Button> : null}
+          {!locked ? <Button disabled={saving} onClick={saveReceipt}>{saving ? "Guardando..." : "Guardar recepción"}</Button> : null}
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 rounded-xl bg-[#FAFAF8] p-4 md:grid-cols-4">
+        <KpiMini label="Comprado" value={formatNumber(totalPurchased)} />
+        <KpiMini label="Recibido" value={formatNumber(totalReceived)} />
+        <KpiMini label="Diferencias" value={differences} />
+        <KpiMini label="Completada" value={formatDate(detail.completed_at)} />
+      </div>
+
+      <div className="mt-4 grid items-end gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 md:grid-cols-[220px_1fr_auto]">
+        <Field label="Estado de recepción">
+          <select disabled={locked} value={status} onChange={(event) => setStatus(event.target.value as ReceivingStatus)} className="field-input disabled:opacity-70">
+            {RECEIVING_STATUS_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </Field>
+        <Field label="Notas">
+          <input disabled={locked} value={notes} onChange={(event) => setNotes(event.target.value)} className="field-input disabled:opacity-70" placeholder="Observaciones generales" />
+        </Field>
+        {!locked ? <Button variant="secondary" onClick={fillPurchasedQuantities}>Recibir todo</Button> : null}
+      </div>
+
+      {locked ? (
+        <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">La recepción ya está en almacén; el registro queda cerrado.</p>
+      ) : null}
+      {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
+
+      <div className="mt-4 overflow-x-auto rounded-xl border border-[#EDE8E3] bg-white">
+        <table className="w-full border-collapse text-left text-sm">
+          <thead>
+            <tr className="border-b border-[#EDE8E3]">
+              {["Producto", "Destino", "Requisitado", "Comprado", "Recibido", "Diferencia", "Lote", "Caducidad"].map((label) => (
+                <th key={label} className="whitespace-nowrap px-4 py-3 text-[11px] font-bold uppercase tracking-[0.06em] text-stone-400">{label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => {
+              const difference = getReceivingDifference(item);
+              return (
+                <tr key={item.purchase_order_item_id} className="border-b border-[#F5F1EE]">
+                  <td className="min-w-[280px] px-4 py-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <ProductThumb product={item} />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-stone-950">{item.product}</p>
+                        <p className="truncate text-xs font-semibold text-stone-500">{item.presentation ?? "Sin presentación"}</p>
+                        {item.delicate_management ? <p className="mt-1 text-xs font-bold text-amber-700">Cuidado especial</p> : null}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">
+                    <p className="font-semibold text-stone-800">{item.warehouse_name ?? item.almacen ?? "Sin almacén"}</p>
+                    <p className="text-xs text-stone-500">{item.rack_name ?? "Sin rack"}{item.rack_position ? ` · ${item.rack_position}` : ""}</p>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{formatNumber(item.requisition_quantity)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 font-semibold text-stone-700">{formatNumber(item.purchased_quantity)}</td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <input disabled={locked} value={item.received_quantity} onChange={(event) => updateItem(item.purchase_order_item_id, { received_quantity: event.target.value })} type="number" min="0" step="0.001" className="field-input h-9 w-28 disabled:opacity-70" />
+                  </td>
+                  <td className={`whitespace-nowrap px-4 py-3 font-bold ${difference === 0 ? "text-emerald-700" : "text-red-600"}`}>{formatSignedNumber(difference)}</td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <input disabled={locked} value={item.lot_code} onChange={(event) => updateItem(item.purchase_order_item_id, { lot_code: event.target.value })} className="field-input h-9 w-32 disabled:opacity-70" placeholder="Opcional" />
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <input disabled={locked} value={item.expires_at} onChange={(event) => updateItem(item.purchase_order_item_id, { expires_at: event.target.value })} type="date" className="field-input h-9 w-36 disabled:opacity-70" />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
+}
+
 function SimpleOpsView({ title, subtitle, records, columns }: { title: string; subtitle: string; records: SampleRecord[]; columns: string[] }) {
   return (
     <div>
@@ -2056,41 +3052,390 @@ function SimpleOpsView({ title, subtitle, records, columns }: { title: string; s
   );
 }
 
-function ProductionView({ areas }: { areas: SupplyArea[] }) {
+function ProductionView({
+  supabase,
+  locations,
+  selectedLocation,
+  role,
+}: {
+  supabase: ReturnType<typeof createBrowserSupabaseClient>;
+  locations: LocationRow[];
+  selectedLocation: string;
+  role: UserRole | null;
+}) {
+  const [productionDate, setProductionDate] = useState(formatTodayForFilename());
+  const [search, setSearch] = useState("");
+  const [rows, setRows] = useState<ProductionStockProduct[]>([]);
+  const [bufferItems, setBufferItems] = useState<ProductionBufferItem[]>([]);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [notes, setNotes] = useState("");
+  const [productionLots, setProductionLots] = useState<ProductionLotSummary[]>([]);
+  const [editingLot, setEditingLot] = useState<ProductionLotDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [lotsLoading, setLotsLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
+  const [deletingLotId, setDeletingLotId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const selectedLocationId = selectedLocation === "Todas"
+    ? role?.role === "super_admin"
+      ? null
+      : locations.find((location) => normalize(location.name) === normalize(role?.sucursal ?? ""))?.id ?? null
+    : locations.find((location) => location.name === selectedLocation)?.id ?? null;
+  const targetLocationId = editingLot?.location_id ?? selectedLocationId;
+  const locationLabel = selectedLocation === "Todas" && role?.role !== "super_admin" ? role?.sucursal ?? "Mi sucursal" : selectedLocation;
+  const canManageLots = role?.role === "super_admin";
+
+  const loadRows = useCallback(async () => {
+    if (!supabase) return;
+    setLoading(true);
+    setError(null);
+    const { data, error: loadError } = await supabase.rpc("list_abastecimiento_stock_lots", {
+      p_location_id: selectedLocationId,
+      p_production_date: productionDate || null,
+    });
+    setLoading(false);
+
+    if (loadError) {
+      setError(loadError.message);
+      setRows([]);
+      return;
+    }
+
+    setRows((data as ProductionStockProduct[] | null) ?? []);
+  }, [productionDate, selectedLocationId, supabase]);
+
+  const loadLots = useCallback(async () => {
+    if (!supabase || !canManageLots) return;
+    setLotsLoading(true);
+    const { data, error: lotsError } = await supabase.rpc("list_abastecimiento_production_lots", {
+      p_date_from: null,
+      p_date_to: null,
+      p_limit: 50,
+      p_location_id: selectedLocationId,
+    });
+    setLotsLoading(false);
+
+    if (lotsError) {
+      setError(lotsError.message);
+      setProductionLots([]);
+      return;
+    }
+
+    setProductionLots((data as ProductionLotSummary[] | null) ?? []);
+  }, [canManageLots, selectedLocationId, supabase]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void loadRows();
+      void loadLots();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadLots, loadRows]);
+
+  const visibleRows = rows.filter((row) => `${row.product} ${row.description ?? ""} ${row.packaging ?? ""} ${row.category ?? ""} ${row.subcategory ?? ""} ${row.location_name}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const producedTotal = rows.reduce((sum, row) => sum + Number(row.produced_quantity ?? 0), 0);
+  const activeProducts = rows.filter((row) => Number(row.produced_quantity ?? 0) > 0).length;
+  const bufferTotal = bufferItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+
+  function addToBuffer(row: ProductionStockProduct) {
+    const locationId = row.location_id ?? targetLocationId;
+    if (!locationId) {
+      setError("Selecciona una sucursal para armar el lote del día.");
+      return;
+    }
+
+    setError(null);
+    setSidebarOpen(true);
+    setBufferItems((current) => {
+      const existing = current.find((item) => item.product.finished_product_id === row.finished_product_id);
+      if (existing) {
+        return current.map((item) => (item.product.finished_product_id === row.finished_product_id ? { ...item, quantity: item.quantity + 1 } : item));
+      }
+
+      return [
+        ...current,
+        {
+          product: { ...row, location_id: locationId, location_name: row.location_name === "Todas" ? locationLabel : row.location_name },
+          quantity: 1,
+        },
+      ];
+    });
+  }
+
+  function updateBufferQuantity(finishedProductId: number, quantity: number) {
+    if (quantity <= 0) {
+      setBufferItems((current) => current.filter((item) => item.product.finished_product_id !== finishedProductId));
+      return;
+    }
+
+    setBufferItems((current) => current.map((item) => (item.product.finished_product_id === finishedProductId ? { ...item, quantity } : item)));
+  }
+
+  function resetBuffer() {
+    setBufferItems([]);
+    setNotes("");
+    setEditingLot(null);
+  }
+
+  async function saveProductionLot() {
+    if (!supabase || saving) return;
+    if (!targetLocationId) {
+      setError("Selecciona una sucursal para guardar el lote.");
+      return;
+    }
+
+    if (bufferItems.length === 0) {
+      setError("Agrega al menos un producto al lote.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    const payload = {
+      p_items: bufferItems.map((item) => ({
+        finished_product_id: item.product.finished_product_id,
+        quantity: Number(item.quantity || 0),
+      })),
+      p_notes: notes.trim(),
+    };
+    const { error: saveError } = editingLot
+      ? await supabase.rpc("update_abastecimiento_production_lot", {
+        ...payload,
+        p_lot_id: editingLot.lot_id,
+      })
+      : await supabase.rpc("save_abastecimiento_production_lot", {
+        ...payload,
+        p_location_id: targetLocationId,
+        p_production_date: productionDate || null,
+      });
+    setSaving(false);
+
+    if (saveError) {
+      setError(saveError.message);
+      return;
+    }
+
+    resetBuffer();
+    await Promise.all([loadRows(), loadLots()]);
+  }
+
+  async function loadLotForEdit(lotId: string) {
+    if (!supabase || detailLoadingId) return;
+    setDetailLoadingId(lotId);
+    setError(null);
+    const { data, error: detailError } = await supabase.rpc("get_abastecimiento_production_lot", {
+      p_lot_id: lotId,
+    });
+    setDetailLoadingId(null);
+
+    if (detailError) {
+      setError(detailError.message);
+      return;
+    }
+
+    const detail = data as ProductionLotDetail;
+    setEditingLot(detail);
+    setProductionDate(detail.production_date);
+    setNotes(detail.notes ?? "");
+    setBufferItems(detail.items.map((item) => ({
+      product: {
+        stock_lot_id: null,
+        finished_product_id: item.finished_product_id,
+        product: item.product,
+        description: item.description,
+        packaging: item.packaging,
+        category: item.category,
+        subcategory: item.subcategory,
+        image_url: item.image_url,
+        price: item.price,
+        location_id: detail.location_id,
+        location_name: detail.location_name,
+        production_date: detail.production_date,
+        produced_quantity: item.quantity,
+      },
+      quantity: Number(item.quantity || 0),
+    })));
+    setSidebarOpen(true);
+  }
+
+  async function deleteLot(lot: ProductionLotSummary) {
+    if (!supabase || deletingLotId) return;
+    if (!window.confirm(`Borrar el lote ${lot.folio}? Esta acción ajustará el acumulado de producción.`)) return;
+    setDeletingLotId(lot.lot_id);
+    setError(null);
+    const { error: deleteError } = await supabase.rpc("delete_abastecimiento_production_lot", {
+      p_lot_id: lot.lot_id,
+    });
+    setDeletingLotId(null);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
+
+    if (editingLot?.lot_id === lot.lot_id) resetBuffer();
+    await Promise.all([loadRows(), loadLots()]);
+  }
+
   return (
-    <div>
-      <PageHeader title="Producción diaria y mermas" subtitle="Teran · Panadería y Repostería" />
-      <div className="mb-6 mt-6 grid gap-3 md:grid-cols-4">
-        <KpiCard label="Áreas activas" value={areas.length} />
-        <KpiCard label="Lotes en curso" value={2} accent />
-        <KpiCard label="Merma hoy" value={5} alert />
-        <KpiCard label="Eficiencia" value="94%" />
+    <div className="pb-24">
+      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <PageHeader title="Operaciones de sucursal" subtitle={`Producción diaria · ${locationLabel}`} />
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" disabled={loading} onClick={() => void loadRows()}>{loading ? "Actualizando..." : "Actualizar"}</Button>
+          <Button onClick={() => setSidebarOpen(true)}>Lote del día ({bufferItems.length})</Button>
+        </div>
       </div>
-      <div className="grid gap-5 xl:grid-cols-2">
-        {["Producción Panadería", "Producción Repostería"].map((area) => (
-          <Card key={area}>
-            <SectionHeader title={area.replace("Producción ", "")} />
-            <div className="space-y-3">
-              <ProductionRow product={area.includes("Panadería") ? "Baguette clásica" : "Pastel de chocolate"} planned={area.includes("Panadería") ? 60 : 12} done={area.includes("Panadería") ? 58 : 11} />
-              <ProductionRow product={area.includes("Panadería") ? "Croissant" : "Macaron"} planned={area.includes("Panadería") ? 48 : 100} done={area.includes("Panadería") ? 45 : 0} active={area.includes("Repostería")} />
+
+      <div className="grid gap-3 md:grid-cols-4">
+        <KpiCard label="Productos visibles" value={rows.length} accent />
+        <KpiCard label="Productos producidos" value={activeProducts} />
+        <KpiCard label="Cantidad producida" value={formatNumber(producedTotal)} />
+        <KpiCard label="En lote actual" value={formatNumber(bufferTotal)} sub={`${bufferItems.length} productos`} />
+      </div>
+
+      <div className="mt-5 grid gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 md:grid-cols-[180px_1fr_auto] md:items-end">
+        <Field label="Fecha">
+          <input value={productionDate} onChange={(event) => setProductionDate(event.target.value)} type="date" className="field-input" />
+        </Field>
+        <Field label="Buscar producto">
+          <input value={search} onChange={(event) => setSearch(event.target.value)} className="field-input" placeholder="Nombre, empaque o categoría..." />
+        </Field>
+        <div className="mb-4 rounded-lg bg-[#FAFAF8] px-3 py-2 text-center text-xs font-bold text-stone-500">
+          {visibleRows.length} de {rows.length}
+        </div>
+      </div>
+
+      {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
+
+      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {visibleRows.map((row) => (
+          <button
+            key={`${row.location_id ?? "all"}-${row.finished_product_id}`}
+            type="button"
+            onClick={() => addToBuffer(row)}
+            className="group flex min-h-[188px] flex-col overflow-hidden rounded-xl border border-[#EDE8E3] bg-white text-left shadow-[0_1px_4px_rgba(28,25,23,0.04)] transition hover:-translate-y-0.5 hover:border-[#D6C9BF] hover:shadow-[0_12px_28px_rgba(28,25,23,0.08)] disabled:cursor-wait disabled:opacity-70"
+          >
+            <ProductThumb product={row} size="lg" />
+            <div className="flex flex-1 flex-col p-4">
+              <div className="min-w-0">
+                <p className="line-clamp-2 text-sm font-extrabold text-stone-950">{row.product}</p>
+                <p className="mt-1 truncate text-xs font-semibold text-stone-500">{row.packaging ?? "Sin empaque"}</p>
+                <p className="mt-1 truncate text-xs font-semibold text-stone-500">{[row.category, row.subcategory].filter(Boolean).join(" · ") || "Producto terminado"}</p>
+              </div>
+              <div className="mt-4 flex items-end justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-stone-400">{row.location_name}</p>
+                  <p className="mt-1 text-3xl font-extrabold leading-none text-[#B45309]">{formatNumber(row.produced_quantity)}</p>
+                </div>
+                <span className="rounded-lg bg-[#1C1917] px-3 py-2 text-sm font-extrabold text-white transition group-hover:bg-[#2D2926]">
+                  Agregar
+                </span>
+              </div>
             </div>
-          </Card>
+          </button>
         ))}
       </div>
-    </div>
-  );
-}
 
-function ProductionRow({ product, planned, done, active = false }: { product: string; planned: number; done: number; active?: boolean }) {
-  return (
-    <div className="flex items-center justify-between rounded-lg bg-[#FAFAF8] px-4 py-3">
-      <div>
-        <p className="text-sm font-bold text-stone-950">{product}</p>
-        <p className="text-xs text-stone-500">{planned} piezas planeadas</p>
-      </div>
-      <div className="flex items-center gap-2">
-        <Badge status={active ? "pendiente" : "completado"} />
-        <span className="text-sm font-bold text-[#B45309]">{done}</span>
+      {loading ? <EmptyState message="Cargando productos..." /> : null}
+      {!loading && visibleRows.length === 0 ? <EmptyState message="No hay productos para esta sucursal" /> : null}
+
+      <button
+        type="button"
+        onClick={() => setSidebarOpen(true)}
+        className="fixed bottom-5 right-5 z-30 rounded-full bg-[#1C1917] px-5 py-3 text-sm font-extrabold text-white shadow-[0_16px_40px_rgba(28,25,23,0.25)]"
+      >
+        Lote ({bufferItems.length})
+      </button>
+
+      <div className={`fixed inset-y-0 right-0 z-40 flex w-full max-w-[440px] flex-col border-l border-[#EDE8E3] bg-white shadow-[-18px_0_42px_rgba(28,25,23,0.16)] transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "translate-x-full"}`}>
+        <div className="flex items-start justify-between gap-3 border-b border-[#EDE8E3] px-5 py-4">
+          <div>
+            <p className="text-lg font-extrabold text-stone-950">{editingLot ? `Editando ${editingLot.folio}` : "Lote del día"}</p>
+            <p className="text-sm font-semibold text-stone-500">{editingLot?.location_name ?? locationLabel} · {formatDate(productionDate)}</p>
+          </div>
+          <button type="button" onClick={() => setSidebarOpen(false)} className="text-2xl leading-none text-stone-400 transition hover:text-stone-950">×</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          <div className="rounded-xl border border-[#EDE8E3] bg-[#FAFAF8] p-4">
+            <div className="grid grid-cols-3 gap-3">
+              <KpiMini label="Productos" value={bufferItems.length} />
+              <KpiMini label="Cantidad" value={formatNumber(bufferTotal)} />
+              <KpiMini label="Sucursal" value={editingLot?.location_name ?? (targetLocationId ? locationLabel : "Selecciona")} />
+            </div>
+            <Field label="Notas">
+              <input value={notes} onChange={(event) => setNotes(event.target.value)} className="field-input mt-3" placeholder="Notas del lote" />
+            </Field>
+          </div>
+
+          <div className="mt-4 space-y-3">
+            {bufferItems.map((item) => (
+              <div key={item.product.finished_product_id} className="rounded-xl border border-[#EDE8E3] bg-white p-3">
+                <div className="flex items-start gap-3">
+                  <ProductThumb product={item.product} />
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-2 text-sm font-extrabold text-stone-950">{item.product.product}</p>
+                    <p className="mt-1 truncate text-xs font-semibold text-stone-500">{item.product.packaging ?? "Sin empaque"}</p>
+                  </div>
+                  <button type="button" onClick={() => updateBufferQuantity(item.product.finished_product_id, 0)} className="text-xl leading-none text-stone-300 transition hover:text-red-600">×</button>
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <button type="button" onClick={() => updateBufferQuantity(item.product.finished_product_id, item.quantity - 1)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#EDE8E3] text-lg font-bold">-</button>
+                  <input
+                    value={item.quantity}
+                    onChange={(event) => updateBufferQuantity(item.product.finished_product_id, Number(event.target.value || 0))}
+                    type="number"
+                    min="0"
+                    step="1"
+                    className="field-input h-9 text-center"
+                  />
+                  <button type="button" onClick={() => updateBufferQuantity(item.product.finished_product_id, item.quantity + 1)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#EDE8E3] text-lg font-bold">+</button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {bufferItems.length === 0 ? <EmptyState message="Presiona productos para agregarlos al lote" /> : null}
+
+          {canManageLots ? (
+            <div className="mt-6">
+              <SectionHeader title="Lotes pasados" />
+              <div className="space-y-3">
+                {productionLots.map((lot) => (
+                  <div key={lot.lot_id} className="rounded-xl border border-[#EDE8E3] bg-white p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-extrabold text-stone-950">{lot.folio}</p>
+                        <p className="text-xs font-semibold text-stone-500">{lot.location_name} · {formatDate(lot.production_date)}</p>
+                        <p className="mt-1 text-xs text-stone-500">{formatNumber(lot.total_quantity)} piezas · {lot.items_count} productos</p>
+                      </div>
+                      <Badge status="completado" />
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      <button type="button" onClick={() => void loadLotForEdit(lot.lot_id)} className="rounded-lg border border-[#DDD7D1] px-3 py-1.5 text-xs font-bold text-stone-700 transition hover:bg-[#F5F1EE]">
+                        {detailLoadingId === lot.lot_id ? "Cargando..." : "Editar"}
+                      </button>
+                      <button type="button" disabled={deletingLotId === lot.lot_id} onClick={() => void deleteLot(lot)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-700 transition hover:bg-red-50 disabled:opacity-60">
+                        {deletingLotId === lot.lot_id ? "Borrando..." : "Borrar"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {lotsLoading ? <EmptyState message="Cargando lotes..." /> : null}
+                {!lotsLoading && productionLots.length === 0 ? <EmptyState message="Sin lotes guardados" /> : null}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="border-t border-[#EDE8E3] p-4">
+          {editingLot ? <button type="button" onClick={resetBuffer} className="mb-2 w-full rounded-lg border border-[#EDE8E3] px-4 py-2 text-sm font-bold text-stone-600">Cancelar edición</button> : null}
+          <Button disabled={saving || bufferItems.length === 0 || !targetLocationId} onClick={() => void saveProductionLot()}>
+            {saving ? "Guardando..." : editingLot ? "Guardar cambios" : "Guardar lote"}
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -2326,6 +3671,15 @@ function formatCurrency(value: unknown) {
 
 function formatNumber(value: unknown) {
   return Number(value ?? 0).toLocaleString(APP_LOCALE, { maximumFractionDigits: 3 });
+}
+
+function formatSignedNumber(value: number) {
+  if (value === 0) return "0";
+  return `${value > 0 ? "+" : ""}${formatNumber(value)}`;
+}
+
+function getReceivingDifference(item: Pick<ReceivingDraftItem, "received_quantity" | "purchased_quantity">) {
+  return Number(item.received_quantity || 0) - Number(item.purchased_quantity ?? 0);
 }
 
 function formatDate(value: string) {
