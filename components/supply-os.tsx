@@ -434,15 +434,62 @@ export default function SupplyOsApp() {
         availabilityMap.set(link.inventory_id, [...current, link.location_id]);
       });
 
-      setRole((roleRes.data?.[0] as UserRole | undefined) ?? null);
-      setLocations((locationRes.data as LocationRow[] | null) ?? []);
-      setProducts(((productRes.data as Omit<ProductRow, "location_ids">[] | null) ?? []).map((product) => ({
+      const userRole = (roleRes.data?.[0] as UserRole | undefined) ?? null;
+      const dbLocations = (locationRes.data as LocationRow[] | null) ?? [];
+
+      let initialLocation = "Todas";
+      let filteredLocations = dbLocations;
+
+      if (userRole && userRole.role !== "super_admin") {
+        const matched = dbLocations.find(
+          (loc) => normalize(loc.name) === normalize(userRole.sucursal ?? "")
+        );
+        if (matched) {
+          initialLocation = matched.name;
+          filteredLocations = [matched];
+        } else if (userRole.sucursal) {
+          initialLocation = userRole.sucursal;
+          filteredLocations = dbLocations.filter(
+            (loc) => normalize(loc.name) === normalize(userRole.sucursal)
+          );
+        }
+      }
+
+      setSelectedLocation(initialLocation);
+
+      const userLocationId = filteredLocations.length === 1 ? filteredLocations[0].id : null;
+
+      const mappedProducts = ((productRes.data as Omit<ProductRow, "location_ids">[] | null) ?? []).map((product) => ({
         ...product,
         location_ids: availabilityMap.get(product.id) ?? [],
-      })));
-      setAreas((areaRes.data as SupplyArea[] | null) ?? []);
-      setRequisitions((reqRes.data as SupplyRequisition[] | null) ?? []);
-      setPurchaseOrders((purchaseRes.data as PurchaseOrderRow[] | null) ?? []);
+      }));
+
+      let finalProducts = mappedProducts;
+      let finalAreas = (areaRes.data as SupplyArea[] | null) ?? [];
+      let finalRequisitions = (reqRes.data as SupplyRequisition[] | null) ?? [];
+      let finalPurchaseOrders = (purchaseRes.data as PurchaseOrderRow[] | null) ?? [];
+
+      if (userRole && userRole.role !== "super_admin" && userLocationId) {
+        // Filter products: keep only if related to user's location
+        finalProducts = mappedProducts.filter(
+          (product) =>
+            product.location_ids.includes(userLocationId) ||
+            product.location_id === userLocationId
+        );
+        // Filter areas
+        finalAreas = finalAreas.filter((area) => area.location_id === userLocationId);
+        // Filter requisitions
+        finalRequisitions = finalRequisitions.filter((req) => req.location_id === userLocationId);
+        // Filter purchase orders
+        finalPurchaseOrders = finalPurchaseOrders.filter((po) => po.location_id === userLocationId);
+      }
+
+      setRole(userRole);
+      setLocations(filteredLocations);
+      setProducts(finalProducts);
+      setAreas(finalAreas);
+      setRequisitions(finalRequisitions);
+      setPurchaseOrders(finalPurchaseOrders);
     },
     [supabase],
   );
@@ -471,6 +518,7 @@ export default function SupplyOsApp() {
         setRole(null);
         setRequisitions([]);
         setPurchaseOrders([]);
+        setSelectedLocation("Todas");
       }
     });
 
@@ -524,6 +572,7 @@ export default function SupplyOsApp() {
           setSelectedLocation={setSelectedLocation}
           setView={setView}
           pendingCount={pendingCount}
+          role={role}
         />
         {dataError ? (
           <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 md:px-7">{dataError}</div>
@@ -550,7 +599,7 @@ export default function SupplyOsApp() {
               reload={() => loadWorkspace(user.id)}
             />
           )}
-          {view === "Inventario" && <InventoryView supabase={supabase} selectedLocation={selectedLocation} />}
+          {view === "Inventario" && <InventoryView supabase={supabase} selectedLocation={selectedLocation} role={role} />}
           {view === "Catalogo" && <CatalogView products={products} />}
           {view === "Compras" && (
             <PurchasesView
@@ -565,6 +614,7 @@ export default function SupplyOsApp() {
             <ReceiptsView
               supabase={supabase}
               selectedLocation={selectedLocation}
+              role={role}
             />
           )}
           {view === "Traspasos" && (
@@ -928,7 +978,7 @@ function RequisitionsView({
         </div>
         {filtered.length === 0 ? <EmptyState message="No hay solicitudes con este filtro" /> : null}
       </Card>
-      {open ? <NewRequisitionModal supabase={supabase} selectedLocation={selectedLocation} locations={locations} areas={areas} products={products} onClose={() => setOpen(false)} onCreated={async () => { setOpen(false); await reload(); }} /> : null}
+      {open ? <NewRequisitionModal supabase={supabase} selectedLocation={selectedLocation} locations={locations} areas={areas} products={products} role={role} onClose={() => setOpen(false)} onCreated={async () => { setOpen(false); await reload(); }} /> : null}
       {detail ? (
         <RequisitionDetailModal
           key={`${detail.id}-${detail.updated_at}-${detail.status}`}
@@ -937,6 +987,7 @@ function RequisitionsView({
           areas={areas}
           products={products}
           locations={locations}
+          role={role}
           canManageStatus={canManageStatus}
           onClose={() => setDetail(null)}
           onUpdated={async (updatedDetail) => {
@@ -955,6 +1006,7 @@ function RequisitionDetailModal({
   areas,
   products,
   locations,
+  role,
   canManageStatus,
   onClose,
   onUpdated,
@@ -964,6 +1016,7 @@ function RequisitionDetailModal({
   areas: SupplyArea[];
   products: ProductRow[];
   locations: LocationRow[];
+  role: UserRole | null;
   canManageStatus: boolean;
   onClose: () => void;
   onUpdated: (detail: SupplyRequisitionDetail) => Promise<void>;
@@ -1135,7 +1188,7 @@ function RequisitionDetailModal({
 
       <div className="mt-4 grid gap-4 lg:grid-cols-4">
         <Field label="Sucursal">
-          <select disabled={!canEditContent} value={locationId} onChange={(event) => handleLocationChange(event.target.value)} className="field-input disabled:opacity-70">
+          <select disabled={!canEditContent || role?.role !== "super_admin"} value={locationId} onChange={(event) => handleLocationChange(event.target.value)} className="field-input disabled:opacity-70">
             {locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
           </select>
         </Field>
@@ -1234,6 +1287,7 @@ function NewRequisitionModal({
   locations,
   areas,
   products,
+  role,
   onClose,
   onCreated,
 }: {
@@ -1242,6 +1296,7 @@ function NewRequisitionModal({
   locations: LocationRow[];
   areas: SupplyArea[];
   products: ProductRow[];
+  role: UserRole | null;
   onClose: () => void;
   onCreated: () => Promise<void>;
 }) {
@@ -1330,7 +1385,7 @@ function NewRequisitionModal({
     <Modal title="Nueva Requisición" onClose={onClose} maxWidthClass="max-w-5xl">
       <div className="grid gap-4 lg:grid-cols-4">
         <Field label="Sucursal">
-          <select value={locationId} onChange={(event) => handleLocationChange(event.target.value)} className="field-input">
+          <select disabled={role?.role !== "super_admin"} value={locationId} onChange={(event) => handleLocationChange(event.target.value)} className="field-input disabled:opacity-75">
             {locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
           </select>
         </Field>
@@ -2312,9 +2367,11 @@ function CatalogView({ products }: { products: ProductRow[] }) {
 function InventoryView({
   supabase,
   selectedLocation,
+  role,
 }: {
   supabase: ReturnType<typeof createBrowserSupabaseClient>;
   selectedLocation: string;
+  role: UserRole | null;
 }) {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -2342,8 +2399,14 @@ function InventoryView({
       return;
     }
 
-    setRows((data as InventoryStoredRow[] | null) ?? []);
-  }, [dateFrom, dateTo, supabase]);
+    let fetchedRows = (data as InventoryStoredRow[] | null) ?? [];
+    if (role && role.role !== "super_admin") {
+      fetchedRows = fetchedRows.filter(
+        (row) => normalize(row.location_name) === normalize(role.sucursal ?? "")
+      );
+    }
+    setRows(fetchedRows);
+  }, [dateFrom, dateTo, role, supabase]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -2679,9 +2742,11 @@ function PurchasesView({
 function ReceiptsView({
   supabase,
   selectedLocation,
+  role,
 }: {
   supabase: ReturnType<typeof createBrowserSupabaseClient>;
   selectedLocation: string;
+  role: UserRole | null;
 }) {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -2709,8 +2774,14 @@ function ReceiptsView({
       return;
     }
 
-    setRows((data as ReceivingOrderRow[] | null) ?? []);
-  }, [dateFrom, dateTo, supabase]);
+    let fetchedRows = (data as ReceivingOrderRow[] | null) ?? [];
+    if (role && role.role !== "super_admin") {
+      fetchedRows = fetchedRows.filter(
+        (row) => normalize(row.location_name) === normalize(role.sucursal ?? "")
+      );
+    }
+    setRows(fetchedRows);
+  }, [dateFrom, dateTo, role, supabase]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -3448,6 +3519,7 @@ function Topbar({
   setSelectedLocation,
   setView,
   pendingCount,
+  role,
 }: {
   view: ViewId;
   locations: LocationRow[];
@@ -3455,20 +3527,33 @@ function Topbar({
   setSelectedLocation: (value: string) => void;
   setView: (value: ViewId) => void;
   pendingCount: number;
+  role: UserRole | null;
 }) {
+  const isSuperAdmin = role?.role === "super_admin";
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-[#EDE8E3] bg-white px-4 md:px-6">
       <select value={view} onChange={(event) => setView(event.target.value as ViewId)} className="field-input h-9 max-w-[170px] lg:hidden">
         {NAV_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
       </select>
-      <div className="hidden gap-1 rounded-lg bg-[#F5F1EE] p-1 md:flex">
-        {["Todas", ...locations.map((location) => location.name)].map((location) => (
-          <button key={location} type="button" onClick={() => setSelectedLocation(location)} className={`rounded-md px-3 py-1.5 text-xs font-bold transition ${selectedLocation === location ? "bg-white text-stone-950 shadow-sm" : "text-stone-500 hover:text-stone-950"}`}>{location}</button>
-        ))}
-      </div>
-      <select value={selectedLocation} onChange={(event) => setSelectedLocation(event.target.value)} className="field-input h-9 max-w-[180px] md:hidden">
-        {["Todas", ...locations.map((location) => location.name)].map((location) => <option key={location} value={location}>{location}</option>)}
-      </select>
+      
+      {isSuperAdmin ? (
+        <>
+          <div className="hidden gap-1 rounded-lg bg-[#F5F1EE] p-1 md:flex">
+            {["Todas", ...locations.map((location) => location.name)].map((location) => (
+              <button key={location} type="button" onClick={() => setSelectedLocation(location)} className={`rounded-md px-3 py-1.5 text-xs font-bold transition ${selectedLocation === location ? "bg-white text-stone-950 shadow-sm" : "text-stone-500 hover:text-stone-950"}`}>{location}</button>
+            ))}
+          </div>
+          <select value={selectedLocation} onChange={(event) => setSelectedLocation(event.target.value)} className="field-input h-9 max-w-[180px] md:hidden">
+            {["Todas", ...locations.map((location) => location.name)].map((location) => <option key={location} value={location}>{location}</option>)}
+          </select>
+        </>
+      ) : (
+        <div className="flex items-center gap-2 rounded-lg bg-[#F5F1EE] px-3 py-1.5 text-xs font-bold text-stone-700">
+          <span>Sucursal:</span>
+          <span className="text-[#B45309]">{selectedLocation}</span>
+        </div>
+      )}
+      
       <div className="flex-1" />
       <div className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-[#EDE8E3] bg-white text-stone-600">
         <Icon path="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
