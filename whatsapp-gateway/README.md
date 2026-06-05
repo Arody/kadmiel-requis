@@ -2,6 +2,8 @@
 
 Servicio Node.js que conecta WhatsApp con **Baileys** y envía las notificaciones de Kadmiel Supply OS (la primera: aviso al crear una requisición).
 
+> **Despliegue completo en el VPS (frontend + gateway, PM2 + nginx, puertos 3015/3016):** ver el [README raíz](../README.md). Este documento es la referencia específica del gateway.
+
 > **Por qué es un servicio aparte:** la app web es un *static export* de Next.js (sin servidor). Baileys necesita un proceso **siempre encendido** que mantenga el WebSocket con WhatsApp, así que vive aquí y se despliega por separado (VPS + PM2). **No** forma parte del build de Netlify.
 
 ## Cómo encaja
@@ -28,8 +30,8 @@ El gateway **solo** habla con Supabase (saliente). El navegador nunca habla con 
 ```bash
 cd whatsapp-gateway
 cp .env.example .env
-# edita .env y pega SUPABASE_SERVICE_ROLE_KEY (y opcionalmente GATEWAY_TOKEN)
-npm install        # o: pnpm install
+# edita .env: pega SUPABASE_SERVICE_ROLE_KEY, pon PORT=3016 (y opcional GATEWAY_TOKEN)
+npm install        # usa npm: la carpeta es independiente del workspace pnpm
 ```
 
 Variables (`.env`):
@@ -37,8 +39,8 @@ Variables (`.env`):
 | Variable | Descripción |
 | --- | --- |
 | `SUPABASE_URL` | URL del proyecto (ya viene la de Kadmiel en el ejemplo). |
-| `SUPABASE_SERVICE_ROLE_KEY` | **Secreto.** Permite ejecutar las RPCs `wp_gw_*`. Nunca lo pongas en el frontend. |
-| `PORT` | Puerto del HTTP de health/status (default `8787`). |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Secreto.** Salta el RLS. Va solo en `.env` (gitignored); nunca en `.env.example`, en git, ni en el frontend. |
+| `PORT` | Puerto del HTTP de health/status. En el VPS de Kadmiel: **`3016`** (default del código: `8787`). |
 | `GATEWAY_TOKEN` | Si se define, protege `/status` con `Authorization: Bearer <token>`. |
 | `DEFAULT_COUNTRY_CODE` | Lada por defecto para teléfonos de 10 dígitos (default `52`). |
 | `SWEEP_INTERVAL_MS` | Cada cuánto barre la cola (default `15000`). |
@@ -74,7 +76,7 @@ server {
   server_name wa-gateway.tu-dominio.com;
 
   location / {
-    proxy_pass http://127.0.0.1:8787;
+    proxy_pass http://127.0.0.1:3016;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
