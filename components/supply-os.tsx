@@ -18,7 +18,8 @@ type ViewId =
   | "Traspasos"
   | "Merma"
   | "Catalogo"
-  | "Produccion";
+  | "Produccion"
+  | "Ajustes";
 
 type UserRoleName = "super_admin" | "branch_admin" | "operative" | "app_user";
 type RequisitionRequestType = "ordinaria" | "urgente" | "programada";
@@ -28,9 +29,12 @@ type ReceivingStatus = "pendiente" | "recibida" | "en_almacen";
 
 type UserRole = {
   role: UserRoleName;
-  sucursal: string;
+  sucursal: string | null;
   department: string | null;
   area: string | null;
+  location_id: string | null;
+  area_id: string | null;
+  department_id: string | null;
 };
 
 type LocationRow = {
@@ -60,6 +64,16 @@ type ProductRow = {
 type InventoryLocationLink = {
   inventory_id: string;
   location_id: string;
+};
+
+type InventoryAreaLink = {
+  inventory_id: string;
+  area_id: string;
+};
+
+type InventoryDepartmentLink = {
+  inventory_id: string;
+  department_id: string;
 };
 
 type RequisitionDraftItem = {
@@ -111,6 +125,7 @@ type SupplyRequisitionItem = {
   total_price: number | string | null;
   line_total: number | string;
   almacen: string | null;
+  supplier_name?: string | null;
 };
 
 type SupplyRequisitionDetail = SupplyRequisition & {
@@ -331,6 +346,7 @@ const NAV_ITEMS: Array<{ id: ViewId; label: string; icon: string; tag?: string }
   { id: "Merma", label: "Merma", icon: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" },
   { id: "Catalogo", label: "Catálogo", icon: "M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" },
   { id: "Produccion", label: "Operaciones", icon: "M17 8h1a4 4 0 0 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4ZM6 2v2M10 2v2M14 2v2", tag: "Sucursal" },
+  { id: "Ajustes", label: "Ajustes", icon: "M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281zM15 12a3 3 0 11-6 0 3 3 0 016 0z", tag: "Administración" },
 ];
 
 const STATUS: Record<string, { label: string; className: string }> = {
@@ -403,8 +419,12 @@ export default function SupplyOsApp() {
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [areas, setAreas] = useState<SupplyArea[]>([]);
+  const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
   const [requisitions, setRequisitions] = useState<SupplyRequisition[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderRow[]>([]);
+  const [inventoryAreas, setInventoryAreas] = useState<InventoryAreaLink[]>([]);
+  const [inventoryDepts, setInventoryDepts] = useState<InventoryDepartmentLink[]>([]);
+  const [profile, setProfile] = useState<{ full_name: string | null; email: string } | null>(null);
   const [view, setView] = useState<ViewId>("Dashboard");
   const [selectedLocation, setSelectedLocation] = useState("Todas");
   const [loading, setLoading] = useState(Boolean(supabase));
@@ -415,17 +435,37 @@ export default function SupplyOsApp() {
       if (!supabase) return;
       setDataError(null);
 
-      const [roleRes, locationRes, productRes, inventoryLocationRes, areaRes, reqRes, purchaseRes] = await Promise.all([
-        supabase.from("user_roles").select("role,sucursal,department,area").eq("user_id", activeUserId).limit(1),
+      const [
+        roleRes,
+        locationRes,
+        productRes,
+        inventoryLocationRes,
+        areaRes,
+        reqRes,
+        purchaseRes,
+        categoriesRes,
+        deptRes,
+        areaLinkRes,
+        invAreasRes,
+        invDeptsRes,
+        profileRes
+      ] = await Promise.all([
+        supabase.from("user_roles").select("role,sucursal,department,area,location_id,area_id,department_id").eq("user_id", activeUserId).limit(1),
         supabase.from("locations").select("id,name,address").in("name", ["Teran", "San Cristobal", "Aeropuerto"]).order("name"),
         supabase.from("inventory").select("id,product,unit_price,total_price,brand,presentation,image_url,almacen,location_id,category_id,warehouse_id,rack_id,delicate_management").order("product", { ascending: true }).limit(1000),
         supabase.from("inventory_locations").select("inventory_id,location_id").limit(5000),
         supabase.rpc("list_abastecimiento_areas"),
         supabase.rpc("list_abastecimiento_requisitions"),
         supabase.rpc("list_abastecimiento_purchase_orders"),
+        supabase.from("inventory_categories").select("id,name"),
+        supabase.from("location_departaments").select("id,name"),
+        supabase.from("location_areas").select("id,name"),
+        supabase.from("inventory_areas").select("inventory_id,area_id").limit(10000),
+        supabase.from("inventory_departments").select("inventory_id,department_id").limit(10000),
+        supabase.from("profiles").select("full_name,email").eq("id", activeUserId).limit(1),
       ]);
 
-      const firstError = roleRes.error ?? locationRes.error ?? productRes.error ?? inventoryLocationRes.error ?? areaRes.error ?? reqRes.error ?? purchaseRes.error;
+      const firstError = roleRes.error ?? locationRes.error ?? productRes.error ?? inventoryLocationRes.error ?? areaRes.error ?? reqRes.error ?? purchaseRes.error ?? categoriesRes.error ?? deptRes.error ?? areaLinkRes.error ?? invAreasRes.error ?? invDeptsRes.error ?? profileRes.error;
       if (firstError) setDataError(firstError.message);
 
       const availabilityMap = new Map<string, string[]>();
@@ -434,23 +474,46 @@ export default function SupplyOsApp() {
         availabilityMap.set(link.inventory_id, [...current, link.location_id]);
       });
 
-      const userRole = (roleRes.data?.[0] as UserRole | undefined) ?? null;
+      const rawUserRole = (roleRes.data?.[0] as UserRole | undefined) ?? null;
       const dbLocations = (locationRes.data as LocationRow[] | null) ?? [];
+      const dbDepts = (deptRes.data as Array<{ id: string; name: string }> | null) ?? [];
+      const dbAreas = (areaLinkRes.data as Array<{ id: string; name: string }> | null) ?? [];
+
+      const userRole = (() => {
+        if (!rawUserRole) return null;
+        // Resolve text names dynamically from UUIDs if they are missing
+        const resolvedSucursal = rawUserRole.location_id
+          ? (dbLocations.find((l) => l.id === rawUserRole.location_id)?.name ?? rawUserRole.sucursal)
+          : rawUserRole.sucursal;
+        const resolvedDept = rawUserRole.department_id
+          ? (dbDepts.find((d) => d.id === rawUserRole.department_id)?.name ?? rawUserRole.department)
+          : rawUserRole.department;
+        const resolvedArea = rawUserRole.area_id
+          ? (dbAreas.find((a) => a.id === rawUserRole.area_id)?.name ?? rawUserRole.area)
+          : rawUserRole.area;
+
+        return {
+          ...rawUserRole,
+          sucursal: resolvedSucursal,
+          department: resolvedDept,
+          area: resolvedArea,
+        };
+      })();
 
       let initialLocation = "Todas";
       let filteredLocations = dbLocations;
 
       if (userRole && userRole.role !== "super_admin") {
-        const matched = dbLocations.find(
-          (loc) => normalize(loc.name) === normalize(userRole.sucursal ?? "")
-        );
+        const matched = userRole.location_id
+          ? dbLocations.find((loc) => loc.id === userRole.location_id)
+          : dbLocations.find((loc) => normalize(loc.name) === normalize(userRole.sucursal ?? ""));
         if (matched) {
           initialLocation = matched.name;
           filteredLocations = [matched];
         } else if (userRole.sucursal) {
           initialLocation = userRole.sucursal;
           filteredLocations = dbLocations.filter(
-            (loc) => normalize(loc.name) === normalize(userRole.sucursal)
+            (loc) => normalize(loc.name) === normalize(userRole.sucursal ?? "")
           );
         }
       }
@@ -484,12 +547,21 @@ export default function SupplyOsApp() {
         finalPurchaseOrders = finalPurchaseOrders.filter((po) => po.location_id === userLocationId);
       }
 
+      // Operative users can only see their own requisitions
+      if (userRole && userRole.role === "operative") {
+        finalRequisitions = finalRequisitions.filter((req) => req.requested_by === activeUserId);
+      }
+
       setRole(userRole);
       setLocations(filteredLocations);
       setProducts(finalProducts);
       setAreas(finalAreas);
+      setCategories((categoriesRes.data as Array<{ id: string; name: string }> | null) ?? []);
       setRequisitions(finalRequisitions);
       setPurchaseOrders(finalPurchaseOrders);
+      setInventoryAreas((invAreasRes.data as InventoryAreaLink[] | null) ?? []);
+      setInventoryDepts((invDeptsRes.data as InventoryDepartmentLink[] | null) ?? []);
+      setProfile((profileRes.data?.[0] as { full_name: string | null; email: string } | undefined) ?? null);
     },
     [supabase],
   );
@@ -516,6 +588,7 @@ export default function SupplyOsApp() {
       if (sessionUser) void loadWorkspace(sessionUser.id);
       if (!sessionUser) {
         setRole(null);
+        setProfile(null);
         setRequisitions([]);
         setPurchaseOrders([]);
         setSelectedLocation("Todas");
@@ -532,15 +605,16 @@ export default function SupplyOsApp() {
   if (!user) return <LoginScreen supabase={supabase} onSignedIn={setUser} />;
 
   const pendingCount = requisitions.filter((req) => req.status === "pendiente").length;
+  const navItems = NAV_ITEMS.filter((item) => item.id !== "Ajustes" || role?.role === "super_admin");
 
   return (
     <div className="flex h-dvh overflow-hidden bg-[#F7F3EE] text-stone-950">
       <aside className="hidden w-[220px] shrink-0 flex-col overflow-hidden border-r border-[#2D2926] bg-[#1C1917] lg:flex">
         <SidebarLogo />
         <nav className="flex-1 overflow-y-auto px-2.5 py-3">
-          {NAV_ITEMS.map((item, index) => (
+          {navItems.map((item, index) => (
             <div key={item.id}>
-              {item.tag && NAV_ITEMS[index - 1]?.tag !== item.tag ? (
+              {item.tag && navItems[index - 1]?.tag !== item.tag ? (
                 <div className="mx-1 mb-2 mt-3 border-t border-[#2D2926] pt-3">
                   <p className="px-2 text-[10px] font-bold uppercase tracking-[0.08em] text-[#9B8F84]">{item.tag}</p>
                 </div>
@@ -548,9 +622,8 @@ export default function SupplyOsApp() {
               <button
                 type="button"
                 onClick={() => setView(item.id)}
-                className={`mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-[13.5px] transition ${
-                  view === item.id ? "bg-white/10 font-bold text-white" : "font-medium text-[#C9BFB8] hover:bg-white/[0.04]"
-                }`}
+                className={`mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-[13.5px] transition ${view === item.id ? "bg-white/10 font-bold text-white" : "font-medium text-[#C9BFB8] hover:bg-white/[0.04]"
+                  }`}
               >
                 <Icon path={item.icon} active={view === item.id} />
                 <span className="min-w-0 flex-1 truncate">{item.label}</span>
@@ -585,6 +658,7 @@ export default function SupplyOsApp() {
               requisitions={requisitions}
               selectedLocation={selectedLocation}
               onNav={setView}
+              profile={profile}
             />
           )}
           {view === "Solicitudes" && (
@@ -597,6 +671,9 @@ export default function SupplyOsApp() {
               role={role}
               selectedLocation={selectedLocation}
               reload={() => loadWorkspace(user.id)}
+              categories={categories}
+              inventoryAreas={inventoryAreas}
+              inventoryDepts={inventoryDepts}
             />
           )}
           {view === "Inventario" && <InventoryView supabase={supabase} selectedLocation={selectedLocation} role={role} />}
@@ -636,6 +713,9 @@ export default function SupplyOsApp() {
               role={role}
             />
           )}
+          {view === "Ajustes" && role?.role === "super_admin" && (
+            <SettingsView supabase={supabase} />
+          )}
         </main>
       </section>
     </div>
@@ -673,56 +753,44 @@ function LoginScreen({
     <main className="grid min-h-dvh grid-cols-1 bg-[#F7F3EE] text-stone-950 lg:grid-cols-[0.9fr_1.1fr]">
       <section className="hidden min-h-dvh flex-col justify-between bg-[#1C1917] p-10 text-white lg:flex">
         <SidebarLogo large />
-        <div className="max-w-md">
-          <p className="mb-4 text-sm font-semibold uppercase tracking-[0.16em] text-[#D1C9BE]">Abastecimiento operativo</p>
-          <h1 className="text-5xl font-extrabold leading-[1.02] tracking-normal">Kadmiel Supply OS</h1>
-          <p className="mt-5 text-base leading-7 text-[#C9BFB8]">Requisiciones, compras, recepción, inventario y producción en un solo flujo para Teran, San Cristobal y Aeropuerto.</p>
+        <div className="max-w-md my-auto">
+          <h1 className="text-5xl font-extrabold leading-[1.02] tracking-normal">Sistema de abastecimiento Kadmiel</h1>
         </div>
-        <div className="grid grid-cols-3 gap-3 text-sm text-[#C9BFB8]">
-          {["Teran", "San Cristobal", "Aeropuerto"].map((location) => (
-            <div key={location} className="rounded-lg border border-white/10 bg-white/[0.04] p-3">
-              <div className="mb-2 h-1.5 w-8 rounded-full bg-[#B45309]" />
-              {location}
-            </div>
-          ))}
-        </div>
+        <div /> {/* Spacer */}
       </section>
 
-      <section className="flex min-h-dvh items-center justify-center px-5 py-10">
-        <form onSubmit={handleSubmit} className="w-full max-w-[420px] rounded-2xl border border-[#E5DED7] bg-white p-7 shadow-[0_18px_60px_rgba(28,25,23,0.08)]">
-          <div className="mb-7 flex items-center gap-3 lg:hidden">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#B45309] text-white">
-              <Icon path={NAV_ITEMS[4].icon} active />
+      <section className="flex min-h-dvh flex-col items-center justify-center px-5 py-10">
+        <div className="w-full max-w-[420px] flex flex-col items-center gap-6">
+          <img
+            src="/logo.png"
+            alt="Logo Kadmiel"
+            className="h-80 max-w-full w-auto object-contain shrink-0"
+          />
+          <form onSubmit={handleSubmit} className="w-full rounded-2xl border border-[#E5DED7] bg-white p-7 shadow-[0_18px_60px_rgba(28,25,23,0.08)]">
+            <h2 className="text-2xl font-extrabold tracking-normal text-stone-950">Iniciar sesión</h2>
+            <p className="mt-1 text-sm text-stone-500">Acceso con correo y contraseña.</p>
+
+            <div className="mt-7 space-y-4">
+              <Field label="Correo">
+                <input value={email} onChange={(event) => setEmail(event.target.value)} className="field-input" type="email" autoComplete="email" placeholder="correo@kadmiel.mx" required />
+              </Field>
+              <Field label="Contraseña">
+                <div className="relative">
+                  <input value={password} onChange={(event) => setPassword(event.target.value)} className="field-input pr-11" type={showPassword ? "text" : "password"} autoComplete="current-password" placeholder="••••••••" required />
+                  <button type="button" aria-label={showPassword ? "Ocultar contraseña" : "Ver contraseña"} onClick={() => setShowPassword((current) => !current)} className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-stone-500 transition hover:bg-stone-100 hover:text-stone-900">
+                    <EyeIcon crossed={!showPassword} />
+                  </button>
+                </div>
+              </Field>
             </div>
-            <div>
-              <p className="text-base font-extrabold">Kadmiel</p>
-              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-stone-400">Supply OS</p>
-            </div>
-          </div>
 
-          <h2 className="text-2xl font-extrabold tracking-normal text-stone-950">Iniciar sesión</h2>
-          <p className="mt-1 text-sm text-stone-500">Acceso con correo y contraseña.</p>
-
-          <div className="mt-7 space-y-4">
-            <Field label="Correo">
-              <input value={email} onChange={(event) => setEmail(event.target.value)} className="field-input" type="email" autoComplete="email" placeholder="correo@kadmiel.mx" required />
-            </Field>
-            <Field label="Contraseña">
-              <div className="relative">
-                <input value={password} onChange={(event) => setPassword(event.target.value)} className="field-input pr-11" type={showPassword ? "text" : "password"} autoComplete="current-password" placeholder="••••••••" required />
-                <button type="button" aria-label={showPassword ? "Ocultar contraseña" : "Ver contraseña"} onClick={() => setShowPassword((current) => !current)} className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-stone-500 transition hover:bg-stone-100 hover:text-stone-900">
-                  <EyeIcon crossed={!showPassword} />
-                </button>
-              </div>
-            </Field>
-          </div>
-
-          {!isSupabaseConfigured ? <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">Falta NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY para conectar el login.</p> : null}
-          {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
-          <button type="submit" disabled={!supabase || submitting} className="mt-6 flex h-11 w-full items-center justify-center rounded-lg bg-[#B45309] text-sm font-bold text-white transition hover:bg-[#963f08] disabled:cursor-not-allowed disabled:opacity-50">
-            {submitting ? "Entrando..." : "Entrar"}
-          </button>
-        </form>
+            {!isSupabaseConfigured ? <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">Falta NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY para conectar el login.</p> : null}
+            {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
+            <button type="submit" disabled={!supabase || submitting} className="mt-6 flex h-11 w-full items-center justify-center rounded-lg bg-[#B45309] text-sm font-bold text-white transition hover:bg-[#963f08] disabled:cursor-not-allowed disabled:opacity-50">
+              {submitting ? "Entrando..." : "Entrar"}
+            </button>
+          </form>
+        </div>
       </section>
     </main>
   );
@@ -734,20 +802,35 @@ function Dashboard({
   requisitions,
   selectedLocation,
   onNav,
+  profile,
 }: {
   products: ProductRow[];
   locations: LocationRow[];
   requisitions: SupplyRequisition[];
   selectedLocation: string;
   onNav: (view: ViewId) => void;
+  profile: { full_name: string | null; email: string } | null;
 }) {
   const visibleReqs = filterByLocation(requisitions, selectedLocation);
   const pending = visibleReqs.filter((req) => req.status === "pendiente");
   const urgent = visibleReqs.filter((req) => req.request_type === "urgente");
   const now = new Date();
 
+  const hours = now.getHours();
+  let greeting = "Buen día";
+  if (hours >= 12 && hours < 19) {
+    greeting = "Buena tarde";
+  } else if (hours >= 19 || hours < 5) {
+    greeting = "Buena noche";
+  }
+  const displayName = profile?.full_name || profile?.email || "Usuario";
+
   return (
     <div>
+      <div className="mb-6 rounded-2xl border border-[#EDE8E3] bg-gradient-to-r from-[#FAFAF8] to-[#F5EFEA] p-5 shadow-sm">
+        <p className="text-xl font-extrabold text-stone-950">¡{greeting}, {displayName}!</p>
+      </div>
+
       <PageHeader title="Inicio" subtitle={`Resumen operativo · ${formatDashboardDate(now)}`} />
       <div className="mb-6 mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <KpiCard label="Productos maestros" value={products.length} sub="public.inventory" />
@@ -800,6 +883,9 @@ function RequisitionsView({
   role,
   selectedLocation,
   reload,
+  categories,
+  inventoryAreas,
+  inventoryDepts,
 }: {
   supabase: ReturnType<typeof createBrowserSupabaseClient>;
   areas: SupplyArea[];
@@ -809,7 +895,21 @@ function RequisitionsView({
   role: UserRole | null;
   selectedLocation: string;
   reload: () => Promise<void>;
+  categories: Array<{ id: string; name: string }>;
+  inventoryAreas: InventoryAreaLink[];
+  inventoryDepts: InventoryDepartmentLink[];
 }) {
+  const categoryMap = useMemo(() => {
+    const map = new Map<string, string>();
+    categories.forEach((cat) => {
+      map.set(cat.id, cat.name);
+    });
+    return map;
+  }, [categories]);
+
+  const filteredProducts = useMemo(() => {
+    return getFilteredProductsForUser(products, role, categoryMap, inventoryAreas, inventoryDepts);
+  }, [products, role, categoryMap, inventoryAreas, inventoryDepts]);
   const [filter, setFilter] = useState("todas");
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<SupplyRequisitionDetail | null>(null);
@@ -978,14 +1078,14 @@ function RequisitionsView({
         </div>
         {filtered.length === 0 ? <EmptyState message="No hay solicitudes con este filtro" /> : null}
       </Card>
-      {open ? <NewRequisitionModal supabase={supabase} selectedLocation={selectedLocation} locations={locations} areas={areas} products={products} role={role} onClose={() => setOpen(false)} onCreated={async () => { setOpen(false); await reload(); }} /> : null}
+      {open ? <NewRequisitionModal supabase={supabase} selectedLocation={selectedLocation} locations={locations} areas={areas} products={filteredProducts} role={role} onClose={() => setOpen(false)} onCreated={async () => { setOpen(false); await reload(); }} /> : null}
       {detail ? (
         <RequisitionDetailModal
           key={`${detail.id}-${detail.updated_at}-${detail.status}`}
           supabase={supabase}
           detail={detail}
           areas={areas}
-          products={products}
+          products={filteredProducts}
           locations={locations}
           role={role}
           canManageStatus={canManageStatus}
@@ -1193,7 +1293,7 @@ function RequisitionDetailModal({
           </select>
         </Field>
         <Field label="Área">
-          <select disabled={!canEditContent} value={areaId} onChange={(event) => setAreaId(event.target.value)} className="field-input disabled:opacity-70">
+          <select disabled={!canEditContent || role?.role !== "super_admin"} value={areaId} onChange={(event) => setAreaId(event.target.value)} className="field-input disabled:opacity-70">
             <option value="">Sin área</option>
             {locationAreas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
           </select>
@@ -1302,7 +1402,26 @@ function NewRequisitionModal({
 }) {
   const defaultLocation = locations.find((location) => location.name === selectedLocation)?.id ?? locations[0]?.id ?? "";
   const [locationId, setLocationId] = useState(defaultLocation);
-  const [areaId, setAreaId] = useState("");
+
+  const initialLocationAreas = useMemo(() => areas.filter((area) => area.location_id === defaultLocation), [areas, defaultLocation]);
+  const initialAreaId = useMemo(() => {
+    if (!role?.area) return "";
+    const normRoleArea = normalize(role.area);
+    // Try exact match first
+    let matched = initialLocationAreas.find((area) => {
+      return normalize(area.name) === normRoleArea;
+    });
+    // Fall back to substring match if no exact match is found
+    if (!matched) {
+      matched = initialLocationAreas.find((area) => {
+        const normAreaName = normalize(area.name);
+        return normAreaName.includes(normRoleArea) || normRoleArea.includes(normAreaName);
+      });
+    }
+    return matched?.id ?? "";
+  }, [initialLocationAreas, role]);
+
+  const [areaId, setAreaId] = useState(initialAreaId);
   const [requestType, setRequestType] = useState("ordinaria");
   const [productSearch, setProductSearch] = useState("");
   const [draftProductId, setDraftProductId] = useState("");
@@ -1390,7 +1509,7 @@ function NewRequisitionModal({
           </select>
         </Field>
         <Field label="Área">
-          <select value={areaId} onChange={(event) => setAreaId(event.target.value)} className="field-input">
+          <select disabled={role?.role !== "super_admin"} value={areaId} onChange={(event) => setAreaId(event.target.value)} className="field-input disabled:opacity-75">
             <option value="">Sin área</option>
             {locationAreas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
           </select>
@@ -1643,8 +1762,40 @@ async function downloadPurchaseOrderPdf(detail: PurchaseOrderDetail) {
   cursorY = renderPurchaseOrderItemsHeader(doc, cursorY + 8);
   const imageMap = await buildItemImageMap(detail.items);
 
-  for (const [index, item] of detail.items.entries()) {
-    cursorY = renderPurchaseOrderItemRow(doc, item, imageMap.get(item.id) ?? null, index + 1, cursorY);
+  const groupedItems = detail.items.reduce((acc, item) => {
+    const supplierName = item.supplier_name || "Sin Proveedor";
+    if (!acc[supplierName]) {
+      acc[supplierName] = [];
+    }
+    acc[supplierName].push(item);
+    return acc;
+  }, {} as Record<string, SupplyRequisitionItem[]>);
+
+  let globalIndex = 1;
+  const suppliers = Object.keys(groupedItems).sort();
+
+  for (const supplierName of suppliers) {
+    const items = groupedItems[supplierName];
+
+    cursorY = ensurePdfSpace(doc, cursorY, 28);
+    if (cursorY === PDF_LAYOUT.margin) {
+      cursorY = renderPurchaseOrderItemsHeader(doc, cursorY);
+    }
+
+    doc.setFillColor(...PDF_PALETTE.paper);
+    doc.roundedRect(PDF_LAYOUT.margin, cursorY, getPdfContentWidth(), 20, 4, 4, "F");
+
+    doc.setTextColor(...PDF_PALETTE.accent);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text(`Proveedor: ${supplierName}`, PDF_LAYOUT.margin + 8, cursorY + 13);
+    cursorY += 24;
+
+    for (const item of items) {
+      cursorY = renderPurchaseOrderItemRow(doc, item, imageMap.get(item.id) ?? null, globalIndex, cursorY);
+      globalIndex++;
+    }
+    cursorY += 6;
   }
 
   cursorY = renderPurchaseOrderTotals(doc, detail, cursorY + 12);
@@ -2685,49 +2836,49 @@ function PurchasesView({
                 const draftStatus = getDraftStatus(order);
                 const canDownload = order.status === "aprobado" || order.status === "completado";
                 return (
-                <tr key={order.id} className="border-b border-[#F5F1EE] transition hover:bg-[#FAFAF7]">
-                  <td className="whitespace-nowrap px-4 py-3 font-bold text-[#B45309]">{order.folio}</td>
-                  <td className="whitespace-nowrap px-4 py-3 font-semibold text-stone-700">{order.requisition_folio}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{formatDate(order.created_at)}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{order.location_name}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{order.requested_by_name}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{order.items_count}</td>
-                  <td className="whitespace-nowrap px-4 py-3 font-bold text-stone-950">{formatCurrency(order.estimated_total)}</td>
-                  <td className="whitespace-nowrap px-4 py-3"><Badge status={order.status} /></td>
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {canManagePurchases ? (
-                        <>
-                          <select
-                            value={draftStatus}
-                            onChange={(event) => setStatusDrafts((current) => ({ ...current, [order.id]: event.target.value as PurchaseOrderStatus }))}
-                            disabled={statusLoadingId === order.id}
-                            className="field-input h-9 min-w-[130px] bg-white text-xs disabled:opacity-70"
-                          >
-                            {PURCHASE_ORDER_STATUS_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                          </select>
-                          <button
-                            type="button"
-                            disabled={draftStatus === order.status || statusLoadingId === order.id}
-                            onClick={() => void updateStatus(order)}
-                            className="rounded-lg border border-[#DDD7D1] px-3 py-1.5 text-xs font-bold text-stone-700 transition hover:bg-[#F5F1EE] disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            {statusLoadingId === order.id ? "Guardando..." : "Guardar"}
-                          </button>
-                        </>
-                      ) : null}
-                      <button
-                        type="button"
-                        disabled={!canDownload || loadingId === order.id}
-                        title={canDownload ? "Descargar orden de compra" : "Aprueba la compra para generar la orden"}
-                        onClick={() => void generatePurchaseOrder(order.id)}
-                        className="rounded-lg bg-[#1C1917] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#2D2926] disabled:cursor-not-allowed disabled:bg-stone-300"
-                      >
-                        {loadingId === order.id ? "Generando..." : "Orden PDF"}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
+                  <tr key={order.id} className="border-b border-[#F5F1EE] transition hover:bg-[#FAFAF7]">
+                    <td className="whitespace-nowrap px-4 py-3 font-bold text-[#B45309]">{order.folio}</td>
+                    <td className="whitespace-nowrap px-4 py-3 font-semibold text-stone-700">{order.requisition_folio}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-stone-700">{formatDate(order.created_at)}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-stone-700">{order.location_name}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-stone-700">{order.requested_by_name}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-stone-700">{order.items_count}</td>
+                    <td className="whitespace-nowrap px-4 py-3 font-bold text-stone-950">{formatCurrency(order.estimated_total)}</td>
+                    <td className="whitespace-nowrap px-4 py-3"><Badge status={order.status} /></td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {canManagePurchases ? (
+                          <>
+                            <select
+                              value={draftStatus}
+                              onChange={(event) => setStatusDrafts((current) => ({ ...current, [order.id]: event.target.value as PurchaseOrderStatus }))}
+                              disabled={statusLoadingId === order.id}
+                              className="field-input h-9 min-w-[130px] bg-white text-xs disabled:opacity-70"
+                            >
+                              {PURCHASE_ORDER_STATUS_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                            </select>
+                            <button
+                              type="button"
+                              disabled={draftStatus === order.status || statusLoadingId === order.id}
+                              onClick={() => void updateStatus(order)}
+                              className="rounded-lg border border-[#DDD7D1] px-3 py-1.5 text-xs font-bold text-stone-700 transition hover:bg-[#F5F1EE] disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {statusLoadingId === order.id ? "Guardando..." : "Guardar"}
+                            </button>
+                          </>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={!canDownload || loadingId === order.id}
+                          title={canDownload ? "Descargar orden de compra" : "Aprueba la compra para generar la orden"}
+                          onClick={() => void generatePurchaseOrder(order.id)}
+                          className="rounded-lg bg-[#1C1917] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#2D2926] disabled:cursor-not-allowed disabled:bg-stone-300"
+                        >
+                          {loadingId === order.id ? "Generando..." : "Orden PDF"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
                 );
               })}
             </tbody>
@@ -3535,7 +3686,7 @@ function Topbar({
       <select value={view} onChange={(event) => setView(event.target.value as ViewId)} className="field-input h-9 max-w-[170px] lg:hidden">
         {NAV_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
       </select>
-      
+
       {isSuperAdmin ? (
         <>
           <div className="hidden gap-1 rounded-lg bg-[#F5F1EE] p-1 md:flex">
@@ -3553,7 +3704,7 @@ function Topbar({
           <span className="text-[#B45309]">{selectedLocation}</span>
         </div>
       )}
-      
+
       <div className="flex-1" />
       <div className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-[#EDE8E3] bg-white text-stone-600">
         <Icon path="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
@@ -3563,17 +3714,295 @@ function Topbar({
   );
 }
 
+type WpStatus = {
+  status: string;
+  qr: string | null;
+  phone: string | null;
+  command: string | null;
+  last_connected_at: string | null;
+  updated_at: string | null;
+};
+type WpEmployee = { id: string; nombre: string | null; apellidos: string | null; telefono: string | null; has_phone: boolean };
+type WpRecipient = { employee_id: string; display_name: string | null; phone: string };
+type WpRecipientsConfig = { enabled: boolean; recipients: WpRecipient[] };
+type WpMessage = { id: string; to_phone: string; body: string; status: string; attempts: number; last_error: string | null; created_at: string; sent_at: string | null };
+
+const WP_MSG_STATUS: Record<string, { label: string; className: string }> = {
+  pending: { label: "Pendiente", className: "bg-amber-100 text-amber-700" },
+  sending: { label: "Enviando", className: "bg-blue-100 text-blue-700" },
+  sent: { label: "Enviado", className: "bg-emerald-100 text-emerald-700" },
+  failed: { label: "Fallido", className: "bg-red-100 text-red-700" },
+};
+
+function formatWpDateTime(value: string | null) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString(APP_LOCALE, {
+    timeZone: APP_TIME_ZONE,
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function SettingsView({ supabase }: { supabase: ReturnType<typeof createBrowserSupabaseClient> }) {
+  return (
+    <div className="flex flex-col gap-6">
+      <PageHeader title="Ajustes" subtitle="Configuración del sistema · solo super administradores" />
+      <WhatsAppSettingsPanel supabase={supabase} />
+    </div>
+  );
+}
+
+function WhatsAppSettingsPanel({ supabase }: { supabase: ReturnType<typeof createBrowserSupabaseClient> }) {
+  const [status, setStatus] = useState<WpStatus | null>(null);
+  const [employees, setEmployees] = useState<WpEmployee[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [enabled, setEnabled] = useState(false);
+  const [messages, setMessages] = useState<WpMessage[]>([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadStatus = useCallback(async () => {
+    if (!supabase) return;
+    const { data, error: statusError } = await supabase.rpc("wp_get_status");
+    if (statusError) {
+      setError(statusError.message);
+      return;
+    }
+    const row = Array.isArray(data) ? (data[0] as WpStatus | undefined) : (data as WpStatus | null);
+    setStatus(row ?? null);
+  }, [supabase]);
+
+  const loadConfig = useCallback(async () => {
+    if (!supabase) return;
+    const [empRes, recRes, msgRes] = await Promise.all([
+      supabase.rpc("wp_list_employees"),
+      supabase.rpc("wp_get_requisition_recipients"),
+      supabase.rpc("wp_get_recent_messages", { p_limit: 15 }),
+    ]);
+    if (empRes.error) setError(empRes.error.message);
+    else setEmployees((empRes.data as WpEmployee[] | null) ?? []);
+
+    if (!recRes.error && recRes.data) {
+      const config = recRes.data as WpRecipientsConfig;
+      setEnabled(Boolean(config.enabled));
+      setSelectedIds(new Set((config.recipients ?? []).map((r) => r.employee_id)));
+    }
+    if (!msgRes.error) setMessages((msgRes.data as WpMessage[] | null) ?? []);
+  }, [supabase]);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      setLoading(true);
+      await Promise.all([loadStatus(), loadConfig()]);
+      if (active) setLoading(false);
+    })();
+    const timer = setInterval(() => {
+      loadStatus();
+    }, 4000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [loadStatus, loadConfig]);
+
+  function toggleEmployee(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    setSavedAt(null);
+  }
+
+  async function save() {
+    if (!supabase) return;
+    setSaving(true);
+    setError(null);
+    const { error: saveError } = await supabase.rpc("wp_save_requisition_recipients", {
+      p_enabled: enabled,
+      p_employee_ids: Array.from(selectedIds),
+    });
+    setSaving(false);
+    if (saveError) {
+      setError(saveError.message);
+      return;
+    }
+    setSavedAt(Date.now());
+    await loadConfig();
+  }
+
+  async function requestLogout() {
+    if (!supabase) return;
+    await supabase.rpc("wp_request_logout");
+    setStatus((prev) => (prev ? { ...prev, status: "connecting", qr: null, phone: null } : prev));
+    setTimeout(() => loadStatus(), 2500);
+  }
+
+  const filteredEmployees = useMemo(() => {
+    const term = normalize(search.trim());
+    const withName = employees.map((e) => ({
+      ...e,
+      label: `${e.nombre ?? ""} ${e.apellidos ?? ""}`.trim() || "(sin nombre)",
+    }));
+    if (!term) return withName;
+    return withName.filter((e) => normalize(e.label).includes(term) || (e.telefono ?? "").includes(search.trim()));
+  }, [employees, search]);
+
+  const statusValue = status?.status ?? "disconnected";
+
+  return (
+    <div className="flex flex-col gap-5">
+      {error ? <AlertRow tone="red" message={error} /> : null}
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        {/* Conexión */}
+        <div className="rounded-2xl border border-[#E5DED7] bg-white p-6">
+          <SectionHeader title="Conexión de WhatsApp" actionLabel="Actualizar" onAction={loadStatus} />
+          <div className="mt-4 flex flex-col items-center text-center">
+            {loading ? (
+              <p className="py-10 text-sm text-stone-500">Cargando…</p>
+            ) : statusValue === "connected" ? (
+              <>
+                <span className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 text-sm font-bold text-emerald-700">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" /> Conectado
+                </span>
+                <p className="mt-3 text-lg font-extrabold text-stone-950">+{status?.phone}</p>
+                <p className="mt-1 text-xs text-stone-500">Vinculado desde {formatWpDateTime(status?.last_connected_at ?? null)}</p>
+                <div className="mt-5">
+                  <Button variant="secondary" onClick={requestLogout}>Desvincular</Button>
+                </div>
+              </>
+            ) : statusValue === "qr" && status?.qr ? (
+              <>
+                <img src={status.qr} alt="Código QR de WhatsApp" className="h-56 w-56 rounded-lg border border-[#E5DED7]" />
+                <p className="mt-4 text-sm font-semibold text-stone-700">Escanea para vincular</p>
+                <p className="mt-1 max-w-xs text-xs text-stone-500">WhatsApp → Ajustes → Dispositivos vinculados → Vincular un dispositivo. El código se renueva solo.</p>
+              </>
+            ) : (
+              <>
+                <span className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-3 py-1 text-sm font-bold text-amber-700">
+                  <span className="h-2 w-2 rounded-full bg-amber-500" /> {statusValue === "connecting" ? "Conectando…" : "Sin conexión"}
+                </span>
+                <p className="mt-4 max-w-xs text-xs text-stone-500">
+                  Esperando al gateway de WhatsApp. Cuando esté corriendo en el servidor aparecerá aquí un código QR para vincular. Verifica que el servicio esté activo (PM2) si no aparece en unos segundos.
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Últimos envíos */}
+        <div className="rounded-2xl border border-[#E5DED7] bg-white p-6">
+          <SectionHeader title="Últimos envíos" />
+          <div className="mt-4 flex flex-col gap-2">
+            {messages.length === 0 ? (
+              <EmptyState message="Aún no hay notificaciones enviadas" />
+            ) : (
+              messages.map((msg) => {
+                const chip = WP_MSG_STATUS[msg.status] ?? { label: msg.status, className: "bg-stone-100 text-stone-600" };
+                return (
+                  <div key={msg.id} className="flex items-center justify-between gap-3 rounded-lg border border-[#EDE8E3] px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-stone-800">+{msg.to_phone}</p>
+                      <p className="text-xs text-stone-500">{formatWpDateTime(msg.created_at)}{msg.last_error ? ` · ${msg.last_error}` : ""}</p>
+                    </div>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ${chip.className}`}>{chip.label}</span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Destinatarios de "Nueva requisición" */}
+      <div className="rounded-2xl border border-[#E5DED7] bg-white p-6">
+        <div className="flex flex-col gap-1 border-b border-[#EDE8E3] pb-4">
+          <h3 className="text-base font-extrabold text-stone-950">Notificación: nueva requisición</h3>
+          <p className="text-sm text-stone-500">Estas personas recibirán un WhatsApp cada vez que se cree una requisición.</p>
+        </div>
+
+        <label className="mt-4 flex items-center gap-3">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(event) => { setEnabled(event.target.checked); setSavedAt(null); }}
+            className="h-4 w-4 accent-[#B45309]"
+          />
+          <span className="text-sm font-semibold text-stone-800">Activar esta notificación</span>
+        </label>
+
+        <div className="mt-4">
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Buscar empleado por nombre o teléfono…"
+            className="field-input"
+          />
+        </div>
+
+        <div className="mt-3 max-h-72 overflow-y-auto rounded-lg border border-[#EDE8E3]">
+          {loading ? (
+            <p className="p-4 text-sm text-stone-500">Cargando empleados…</p>
+          ) : filteredEmployees.length === 0 ? (
+            <p className="p-4 text-sm text-stone-500">Sin empleados que coincidan.</p>
+          ) : (
+            filteredEmployees.map((emp) => (
+              <label
+                key={emp.id}
+                className={`flex items-center justify-between gap-3 border-b border-[#F1ECE7] px-3 py-2 last:border-b-0 ${emp.has_phone ? "cursor-pointer hover:bg-[#FAF7F4]" : "cursor-not-allowed opacity-55"}`}
+              >
+                <span className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    disabled={!emp.has_phone}
+                    checked={selectedIds.has(emp.id)}
+                    onChange={() => toggleEmployee(emp.id)}
+                    className="h-4 w-4 accent-[#B45309]"
+                  />
+                  <span className="text-sm font-medium text-stone-800">{emp.label}</span>
+                </span>
+                <span className="text-xs text-stone-500">{emp.has_phone ? emp.telefono : "sin teléfono"}</span>
+              </label>
+            ))
+          )}
+        </div>
+
+        <div className="mt-4 flex items-center justify-between">
+          <p className="text-xs text-stone-500">{selectedIds.size} destinatario(s) seleccionado(s)</p>
+          <div className="flex items-center gap-3">
+            {savedAt ? <span className="text-xs font-semibold text-emerald-600">Guardado</span> : null}
+            <Button onClick={save} disabled={saving}>{saving ? "Guardando…" : "Guardar"}</Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SidebarLogo({ large = false }: { large?: boolean }) {
   return (
     <div className={large ? "" : "border-b border-[#2D2926] px-5 py-5"}>
       <div className="flex items-center gap-3">
-        <div className={`${large ? "h-11 w-11" : "h-8 w-8"} flex shrink-0 items-center justify-center rounded-lg bg-[#B45309] text-white`}>
-          <Icon path={NAV_ITEMS[4].icon} active />
-        </div>
-        <div>
-          <p className={`${large ? "text-lg" : "text-sm"} font-extrabold leading-none text-white`}>Kadmiel</p>
-          <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#C9BFB8]">Supply OS</p>
-        </div>
+        <img
+          src="/logo.png"
+          alt="Logo Kadmiel"
+          className={`${large ? "h-10" : "h-8"} w-auto shrink-0`}
+          style={{ filter: "brightness(0) invert(1)" }}
+        />
+        {large ? (
+          <div>
+            <p className="text-lg font-extrabold leading-none text-white">Kadmiel</p>
+            <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#C9BFB8]">Sistema de abastecimiento</p>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -3729,7 +4158,7 @@ function EmptyState({ message }: { message: string }) {
 }
 
 function LoadingScreen() {
-  return <div className="flex min-h-dvh items-center justify-center bg-[#F7F3EE] text-sm font-bold text-stone-500">Cargando Kadmiel Supply OS...</div>;
+  return <div className="flex min-h-dvh items-center justify-center bg-[#F7F3EE] text-sm font-bold text-stone-500">Cargando Sistema de abastecimiento Kadmiel...</div>;
 }
 
 function Icon({ path, active = false }: { path: string; active?: boolean }) {
@@ -3838,4 +4267,33 @@ function getErrorMessage(error: unknown) {
 
 function normalize(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]+/g, "").toLowerCase();
+}
+
+function getFilteredProductsForUser(
+  products: ProductRow[],
+  role: UserRole | null,
+  categoryMap: Map<string, string>,
+  inventoryAreas: InventoryAreaLink[],
+  inventoryDepts: InventoryDepartmentLink[]
+): ProductRow[] {
+  if (!role || role.role === "super_admin") return products;
+
+  const userDeptId = role.department_id;
+  const userAreaId = role.area_id;
+
+  const filtered = products.filter((product) => {
+    // Check department constraint: must match user's department
+    const productDepts = inventoryDepts.filter((d) => d.inventory_id === product.id);
+    const hasDeptMatch = productDepts.some((d) => d.department_id === userDeptId);
+    if (!hasDeptMatch) return false;
+
+    // Check area constraint: must match user's area
+    const productAreas = inventoryAreas.filter((a) => a.inventory_id === product.id);
+    const hasAreaMatch = productAreas.some((a) => a.area_id === userAreaId);
+    if (!hasAreaMatch) return false;
+
+    return true;
+  });
+
+  return filtered;
 }
