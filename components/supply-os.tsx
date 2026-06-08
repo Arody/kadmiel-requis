@@ -23,7 +23,7 @@ type ViewId =
 
 type UserRoleName = "super_admin" | "branch_admin" | "operative" | "app_user";
 type RequisitionRequestType = "ordinaria" | "urgente" | "programada";
-type RequisitionStatus = "pendiente" | "aprobado" | "rechazado" | "completado" | "cancelado";
+type RequisitionStatus = "pendiente" | "urgente" | "revisada" | "aprobada" | "cancelada";
 type PurchaseOrderStatus = "pendiente" | "urgente" | "aprobado" | "completado" | "cancelado" | "parcial";
 type ReceivingStatus = "pendiente" | "recibida" | "en_almacen";
 
@@ -83,6 +83,8 @@ type RequisitionDraftItem = {
   quantity: string;
   notes: string;
   product: ProductRow;
+  selected?: boolean;
+  revision_note?: string;
 };
 
 type SupplyArea = {
@@ -104,6 +106,7 @@ type SupplyRequisition = {
   status: RequisitionStatus;
   needed_by: string | null;
   notes: string | null;
+  revision_note?: string | null;
   requested_by: string;
   requested_by_name: string;
   created_at: string;
@@ -121,6 +124,8 @@ type SupplyRequisitionItem = {
   quantity: number | string;
   unit: string | null;
   notes: string | null;
+  selected: boolean;
+  revision_note: string | null;
   unit_price: number | string | null;
   total_price: number | string | null;
   line_total: number | string;
@@ -352,13 +357,16 @@ const NAV_ITEMS: Array<{ id: ViewId; label: string; icon: string; tag?: string }
 const STATUS: Record<string, { label: string; className: string }> = {
   pendiente: { label: "Pendiente", className: "bg-amber-100 text-amber-700" },
   aprobado: { label: "Aprobado", className: "bg-emerald-100 text-emerald-700" },
+  aprobada: { label: "Aprobada", className: "bg-emerald-100 text-emerald-700" },
   recibido: { label: "Recibido", className: "bg-blue-100 text-blue-700" },
   completado: { label: "Completado", className: "bg-emerald-100 text-emerald-700" },
   parcial: { label: "Parcial", className: "bg-violet-100 text-violet-700" },
   urgente: { label: "Urgente", className: "bg-red-100 text-red-700" },
+  revisada: { label: "Revisada", className: "bg-blue-100 text-blue-700" },
   en_transito: { label: "En tránsito", className: "bg-blue-100 text-blue-700" },
   rechazado: { label: "Rechazado", className: "bg-red-100 text-red-700" },
   cancelado: { label: "Cancelado", className: "bg-stone-200 text-stone-600" },
+  cancelada: { label: "Cancelada", className: "bg-stone-200 text-stone-600" },
   recibida: { label: "Recibida", className: "bg-blue-100 text-blue-700" },
   en_almacen: { label: "En almacén", className: "bg-emerald-100 text-emerald-700" },
   diferencia: { label: "Con diferencia", className: "bg-red-100 text-red-700" },
@@ -377,10 +385,10 @@ const REQUEST_TYPE_OPTIONS: Array<[RequisitionRequestType, string]> = [
 
 const REQUISITION_STATUS_OPTIONS: Array<[RequisitionStatus, string]> = [
   ["pendiente", "Pendiente"],
-  ["aprobado", "Aprobado"],
-  ["rechazado", "Rechazado"],
-  ["completado", "Completado"],
-  ["cancelado", "Cancelado"],
+  ["urgente", "Urgente"],
+  ["revisada", "Revisada"],
+  ["aprobada", "Aprobada"],
+  ["cancelada", "Cancelada"],
 ];
 
 const PURCHASE_ORDER_STATUS_OPTIONS: Array<[PurchaseOrderStatus, string]> = [
@@ -1020,7 +1028,7 @@ function RequisitionsView({
           <Button onClick={() => setOpen(true)}>+ Nueva Requi</Button>
         </div>
       </div>
-      <Segmented value={filter} onChange={setFilter} options={[["todas", "Todas"], ["pendiente", "Pendientes"], ["urgente", "Urgentes"], ["aprobado", "Aprobadas"], ["completado", "Completadas"], ["cancelado", "Canceladas"]]} />
+      <Segmented value={filter} onChange={setFilter} options={[["todas", "Todas"], ["pendiente", "Pendientes"], ["urgente", "Urgentes"], ["revisada", "Revisadas"], ["aprobada", "Aprobadas"], ["cancelada", "Canceladas"]]} />
       {detailError ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{detailError}</p> : null}
       <Card className="mt-5 p-0">
         <div className="overflow-x-auto">
@@ -1127,6 +1135,7 @@ function RequisitionDetailModal({
   const [requestType, setRequestType] = useState<RequisitionRequestType>(detail.request_type);
   const [neededBy, setNeededBy] = useState(detail.needed_by ?? "");
   const [notes, setNotes] = useState(detail.notes ?? "");
+  const [revisionNote, setRevisionNote] = useState(detail.revision_note ?? "");
   const [statusDraft, setStatusDraft] = useState<RequisitionStatus>(detail.status);
   const [items, setItems] = useState<RequisitionDraftItem[]>(() => detail.items.map((item) => detailItemToDraftItem(item, productMap.get(item.product_id))));
   const [draftProductId, setDraftProductId] = useState("");
@@ -1139,11 +1148,21 @@ function RequisitionDetailModal({
   const availableProducts = products.filter((product) => productIsAvailableForLocation(product, locationId));
   const selectedDraftProduct = availableProducts.find((product) => product.id === draftProductId);
   const locationAreas = areas.filter((area) => area.location_id === locationId);
-  const canEditContent = detail.status === "pendiente";
-  const statusLocked = detail.status === "cancelado";
+  const canEditContent = detail.status === "pendiente" || detail.status === "urgente" || detail.status === "revisada";
+  const statusLocked = detail.status === "cancelada";
+  const isBranchOrSuperAdmin = role?.role === "branch_admin" || role?.role === "super_admin";
+  const canEditSelections = isBranchOrSuperAdmin && (detail.status === "pendiente" || detail.status === "urgente" || detail.status === "revisada");
   const canAddItem = Boolean(canEditContent && selectedDraftProduct && Number(draftQuantity) > 0);
 
-  function updateItem(clientId: string, changes: Partial<Pick<RequisitionDraftItem, "quantity" | "notes">>) {
+  const selectedTotalMoney = useMemo(() => {
+    return items.reduce((sum, item) => {
+      if (item.selected === false) return sum;
+      const price = Number(item.product.total_price ?? item.product.unit_price ?? 0);
+      return sum + (Number(item.quantity) * price);
+    }, 0);
+  }, [items]);
+
+  function updateItem(clientId: string, changes: Partial<RequisitionDraftItem>) {
     setItems((current) => current.map((item) => (item.clientId === clientId ? { ...item, ...changes } : item)));
   }
 
@@ -1200,12 +1219,15 @@ function RequisitionDetailModal({
         quantity: Number(item.quantity),
         unit: "",
         notes: item.notes,
+        selected: item.selected !== false,
+        revision_note: item.revision_note || "",
       })),
       p_location_id: locationId,
       p_needed_by: neededBy || null,
       p_notes: notes,
       p_request_type: requestType,
       p_requisition_id: detail.id,
+      p_revision_note: revisionNote || null,
     });
     setSaving(false);
 
@@ -1260,9 +1282,10 @@ function RequisitionDetailModal({
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 rounded-xl bg-[#FAFAF8] p-4 md:grid-cols-4">
+      <div className="mt-5 grid gap-3 rounded-xl bg-[#FAFAF8] p-4 md:grid-cols-5">
         <KpiMini label="Partidas" value={items.length} />
         <KpiMini label="Cantidad total" value={items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)} />
+        <KpiMini label="Total Seleccionado" value={formatCurrency(selectedTotalMoney)} />
         <KpiMini label="Necesario para" value={neededBy ? formatDate(neededBy) : "Sin fecha"} />
         <KpiMini label="Última edición" value={formatDateTime(detail.updated_at)} />
       </div>
@@ -1283,7 +1306,7 @@ function RequisitionDetailModal({
       ) : null}
 
       {!canEditContent ? (
-        <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">La requisición ya no está pendiente de aprobación; el contenido queda bloqueado.</p>
+        <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">La requisición ya está aprobada o cancelada; el contenido y selección quedan bloqueados.</p>
       ) : null}
 
       <div className="mt-4 grid gap-4 lg:grid-cols-4">
@@ -1319,32 +1342,64 @@ function RequisitionDetailModal({
           <span className="rounded-full bg-[#F5F1EE] px-2.5 py-1 text-xs font-bold text-stone-600">{items.length}</span>
         </div>
         <div className="divide-y divide-[#EDE8E3]">
-          {items.map((item) => (
-            <div key={item.clientId} className="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_120px_minmax(180px,0.8fr)_40px] lg:items-center">
-              <div className="flex min-w-0 items-center gap-3">
-                <ProductThumb product={item.product} />
-                <div className="min-w-0 flex-1">
-                  {canEditContent ? (
-                    <select value={item.productId} onChange={(event) => updateItemProduct(item.clientId, event.target.value)} className="field-input bg-white">
-                      {availableProducts.map((product) => <option key={product.id} value={product.id}>{product.product} {product.presentation ? `· ${product.presentation}` : ""}</option>)}
-                    </select>
-                  ) : (
-                    <p className="truncate text-sm font-bold text-stone-950">{item.product.product}</p>
-                  )}
-                  <p className="mt-1 truncate text-xs font-semibold text-stone-500">{item.product.presentation ?? "Sin presentación"}</p>
+          {items.map((item) => {
+            const price = Number(item.product.total_price ?? item.product.unit_price ?? 0);
+            return (
+              <div key={item.clientId} className="grid gap-3 px-4 py-3 lg:grid-cols-[auto_minmax(0,1fr)_120px_minmax(180px,0.8fr)_40px] lg:items-center">
+                {/* Checkbox for item selection */}
+                <div className="flex items-center justify-center pt-2 lg:pt-0">
+                  <input
+                    type="checkbox"
+                    disabled={!canEditSelections}
+                    checked={item.selected !== false}
+                    onChange={(event) => {
+                      updateItem(item.clientId, { selected: event.target.checked });
+                    }}
+                    className="h-5 w-5 rounded border-[#DDD7D1] text-[#B45309] focus:ring-[#B45309] disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
                 </div>
+                <div className="flex min-w-0 items-center gap-3">
+                  <ProductThumb product={item.product} />
+                  <div className="min-w-0 flex-1">
+                    {canEditContent ? (
+                      <select value={item.productId} onChange={(event) => updateItemProduct(item.clientId, event.target.value)} className="field-input bg-white">
+                        {availableProducts.map((product) => <option key={product.id} value={product.id}>{product.product} {product.presentation ? `· ${product.presentation}` : ""}</option>)}
+                      </select>
+                    ) : (
+                      <p className="truncate text-sm font-bold text-stone-950">{item.product.product}</p>
+                    )}
+                    <p className="mt-1 truncate text-xs font-semibold text-stone-500">
+                      {item.product.presentation ?? "Sin presentación"}
+                      {price > 0 ? ` · ${formatCurrency(price)} c/u (Subtotal: ${formatCurrency(Number(item.quantity) * price)})` : ""}
+                    </p>
+                  </div>
+                </div>
+                <Field label="Cantidad">
+                  <input disabled={!canEditContent} value={item.quantity} onChange={(event) => updateItem(item.clientId, { quantity: event.target.value })} type="number" min="0" step="0.001" className="field-input disabled:opacity-70" />
+                </Field>
+                <Field label="Notas">
+                  <input disabled={!canEditContent} value={item.notes} onChange={(event) => updateItem(item.clientId, { notes: event.target.value })} className="field-input disabled:opacity-70" placeholder="Opcional" />
+                </Field>
+                <button type="button" disabled={!canEditContent || items.length === 1} aria-label={`Quitar ${item.product.product}`} onClick={() => removeItem(item.clientId)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#EDE8E3] text-xl leading-none text-stone-400 transition hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40">
+                  ×
+                </button>
+
+                {item.selected === false ? (
+                  <div className="col-span-full mt-1 border-t border-[#F5F1EE] pt-2 lg:col-start-2 lg:col-span-3">
+                    <Field label="Motivo por el cual no se selecciona esta partida:">
+                      <input
+                        disabled={!canEditSelections}
+                        value={item.revision_note ?? ""}
+                        onChange={(event) => updateItem(item.clientId, { revision_note: event.target.value })}
+                        className="field-input border-amber-300 bg-amber-50/20 focus:border-amber-500 focus:ring-amber-500"
+                        placeholder="Ej. Hay inventario disponible, muy costoso, etc."
+                      />
+                    </Field>
+                  </div>
+                ) : null}
               </div>
-              <Field label="Cantidad">
-                <input disabled={!canEditContent} value={item.quantity} onChange={(event) => updateItem(item.clientId, { quantity: event.target.value })} type="number" min="0" step="0.001" className="field-input disabled:opacity-70" />
-              </Field>
-              <Field label="Notas">
-                <input disabled={!canEditContent} value={item.notes} onChange={(event) => updateItem(item.clientId, { notes: event.target.value })} className="field-input disabled:opacity-70" placeholder="Opcional" />
-              </Field>
-              <button type="button" disabled={!canEditContent || items.length === 1} aria-label={`Quitar ${item.product.product}`} onClick={() => removeItem(item.clientId)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#EDE8E3] text-xl leading-none text-stone-400 transition hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40">
-                ×
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -1368,9 +1423,22 @@ function RequisitionDetailModal({
         </div>
       ) : null}
 
-      <Field label="Notas generales">
-        <textarea disabled={!canEditContent} value={notes} onChange={(event) => setNotes(event.target.value)} className="field-input min-h-20 resize-y disabled:opacity-70" placeholder="Opcional" />
-      </Field>
+      <div className="grid gap-4 md:grid-cols-2 mt-4">
+        <Field label="Notas generales">
+          <textarea disabled={!canEditContent} value={notes} onChange={(event) => setNotes(event.target.value)} className="field-input min-h-20 resize-y disabled:opacity-70" placeholder="Opcional" />
+        </Field>
+        {isBranchOrSuperAdmin ? (
+          <Field label="Nota de revisión general">
+            <textarea
+              disabled={!canEditSelections}
+              value={revisionNote}
+              onChange={(event) => setRevisionNote(event.target.value)}
+              className="field-input min-h-20 resize-y border-amber-300 bg-amber-50/20 focus:border-amber-500 focus:ring-amber-500 disabled:opacity-75"
+              placeholder="Ej. Explicación general de por qué no se seleccionaron todas las partidas..."
+            />
+          </Field>
+        ) : null}
+      </div>
 
       {error ? <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
       <div className="mt-6 flex justify-end gap-2">
@@ -1668,6 +1736,8 @@ function detailItemToDraftItem(item: SupplyRequisitionItem, product?: ProductRow
     productId: item.product_id,
     quantity: String(item.quantity ?? ""),
     notes: item.notes ?? "",
+    selected: item.selected ?? true,
+    revision_note: item.revision_note ?? "",
     product: product ?? {
       id: item.product_id,
       product: item.product,
@@ -1724,7 +1794,7 @@ type PdfColumn = {
 
 async function downloadRequisitionPdf(detail: SupplyRequisitionDetail) {
   const doc = createLetterPdf();
-  const cursorY = renderPdfDocumentHeader(doc, detail.folio, `Sucursal ${detail.location_name}`);
+  const cursorY = renderPdfDocumentHeader(doc, detail.folio, `Sucursal ${detail.location_name}`, formatCurrency(getRequisitionTotal(detail)));
   await renderRequisitionPdfSection(doc, detail, cursorY, false);
   renderPdfFooter(doc);
   doc.save(`${sanitizeFilename(detail.folio)}.pdf`);
@@ -1732,7 +1802,8 @@ async function downloadRequisitionPdf(detail: SupplyRequisitionDetail) {
 
 async function downloadGeneralRequisitionPdf(details: SupplyRequisitionDetail[]) {
   const doc = createLetterPdf();
-  let cursorY = renderPdfDocumentHeader(doc, "Requisiciones Generales", `${details.length} requisiciones seleccionadas`, `${groupByLocation(details).length} sucursales`);
+  const grandTotal = details.reduce((sum, d) => sum + getRequisitionTotal(d), 0);
+  let cursorY = renderPdfDocumentHeader(doc, "Requisiciones Generales", `${details.length} requisiciones seleccionadas · ${groupByLocation(details).length} sucursales`, formatCurrency(grandTotal));
   let currentLocation = "";
 
   for (const detail of sortRequisitionsForPdf(details)) {
@@ -2143,7 +2214,14 @@ async function renderRequisitionPdfSection(doc: jsPDF, detail: SupplyRequisition
     cursorY = await renderPdfItemRow(doc, item, imageMap.get(item.id) ?? null, index + 1, cursorY);
   }
 
-  cursorY += 8;
+  const requisitionTotal = getRequisitionTotal(detail);
+  cursorY = ensurePdfSpace(doc, cursorY, 28);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(...PDF_PALETTE.dark);
+  doc.text(`Total Requisición: ${formatCurrency(requisitionTotal)}`, PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin, cursorY + 12, { align: "right" });
+  cursorY += 20;
+
   cursorY = renderPdfNotes(doc, detail.notes ?? "Sin notas", cursorY);
 
   return cursorY + (compact ? 12 : 18);
@@ -2192,10 +2270,18 @@ function renderPdfItemsTableHeader(doc: jsPDF, cursorY: number) {
 
 async function renderPdfItemRow(doc: jsPDF, item: SupplyRequisitionItem, imageDataUrl: string | null, index: number, cursorY: number) {
   const columns = getPdfColumns();
-  const productText = [item.product, item.brand ? `Marca: ${item.brand}` : null].filter(Boolean).join("\n");
+  const isSelected = item.selected !== false;
+  const productPrefix = isSelected ? "" : "[NO SELECCIONADO] ";
+  const productText = [productPrefix + item.product, item.brand ? `Marca: ${item.brand}` : null].filter(Boolean).join("\n");
   const presentationLines = doc.splitTextToSize(item.presentation ?? "Sin presentación", getColumn(columns, "presentation").width - 8);
   const productLines = doc.splitTextToSize(productText, getColumn(columns, "product").width - 8);
-  const notesLines = doc.splitTextToSize(item.notes ?? "", getColumn(columns, "notes").width - 8);
+  
+  const combinedNotes = [
+    item.notes,
+    !isSelected && item.revision_note ? `Revisión: ${item.revision_note}` : null
+  ].filter(Boolean).join("\n");
+  const notesLines = doc.splitTextToSize(combinedNotes, getColumn(columns, "notes").width - 8);
+  
   const rowHeight = Math.max(54, productLines.length * 11 + 16, presentationLines.length * 11 + 16, Math.max(notesLines.length, 1) * 11 + 16);
 
   cursorY = ensurePdfSpace(doc, cursorY, rowHeight + 12);
@@ -2209,11 +2295,16 @@ async function renderPdfItemRow(doc: jsPDF, item: SupplyRequisitionItem, imageDa
   doc.setFontSize(9);
   doc.setTextColor(...PDF_PALETTE.ink);
 
+  const price = isSelected ? Number(item.unit_price ?? item.total_price ?? 0) : 0;
+  const lineTotal = isSelected ? Number(item.quantity ?? 0) * price : 0;
+
   drawPdfCellText(doc, String(index), columns, "index", cursorY, rowHeight, "center");
   drawPdfImageCell(doc, imageDataUrl, item.product, columns, cursorY, rowHeight);
   drawPdfCellText(doc, productLines, columns, "product", cursorY, rowHeight);
   drawPdfCellText(doc, presentationLines, columns, "presentation", cursorY, rowHeight);
   drawPdfCellText(doc, formatNumber(item.quantity), columns, "quantity", cursorY, rowHeight, "right");
+  drawPdfCellText(doc, formatCurrency(price), columns, "price", cursorY, rowHeight, "right");
+  drawPdfCellText(doc, formatCurrency(lineTotal), columns, "lineTotal", cursorY, rowHeight, "right");
   drawPdfCellText(doc, notesLines.length > 0 ? notesLines : " ", columns, "notes", cursorY, rowHeight);
 
   return cursorY + rowHeight;
@@ -2267,12 +2358,14 @@ function getPdfContentWidth() {
 
 function getPdfColumns() {
   return [
-    { key: "index", label: "#", x: 0, width: 22, align: "center" as const },
-    { key: "image", label: "Imagen", x: 26, width: 44, align: "left" as const },
-    { key: "product", label: "Producto", x: 74, width: 174, align: "left" as const },
-    { key: "presentation", label: "Presentacion", x: 252, width: 108, align: "left" as const },
-    { key: "quantity", label: "Cantidad", x: 364, width: 58, align: "right" as const },
-    { key: "notes", label: "Notas", x: 426, width: 110, align: "left" as const },
+    { key: "index", label: "#", x: 0, width: 20, align: "center" as const },
+    { key: "image", label: "Imagen", x: 24, width: 42, align: "left" as const },
+    { key: "product", label: "Producto", x: 70, width: 120, align: "left" as const },
+    { key: "presentation", label: "Presentacion", x: 194, width: 76, align: "left" as const },
+    { key: "quantity", label: "Cant.", x: 274, width: 40, align: "right" as const },
+    { key: "price", label: "Precio", x: 318, width: 56, align: "right" as const },
+    { key: "lineTotal", label: "Importe", x: 378, width: 64, align: "right" as const },
+    { key: "notes", label: "Notas", x: 446, width: 90, align: "left" as const },
   ];
 }
 
@@ -2398,9 +2491,10 @@ function getItemLineTotal(item: SupplyRequisitionItem) {
 }
 
 function getRequisitionTotal(detail: { estimated_total?: number | string | null; items: SupplyRequisitionItem[] }) {
-  const explicit = Number(detail.estimated_total ?? 0);
-  if (explicit > 0) return explicit;
-  return detail.items.reduce((sum, item) => sum + getItemLineTotal(item), 0);
+  return detail.items.reduce((sum, item) => {
+    if (item.selected === false) return sum;
+    return sum + getItemLineTotal(item);
+  }, 0);
 }
 
 async function buildItemImageMap(items: SupplyRequisitionItem[]) {
@@ -3724,7 +3818,7 @@ type WpStatus = {
 };
 type WpEmployee = { id: string; nombre: string | null; apellidos: string | null; telefono: string | null; has_phone: boolean };
 type WpRecipient = { employee_id: string; display_name: string | null; phone: string };
-type WpRecipientsConfig = { enabled: boolean; recipients: WpRecipient[] };
+type WpRecipientsConfig = { enabled: boolean; template?: string | null; recipients: WpRecipient[] };
 type WpMessage = { id: string; to_phone: string; body: string; status: string; attempts: number; last_error: string | null; created_at: string; sent_at: string | null };
 
 const WP_MSG_STATUS: Record<string, { label: string; className: string }> = {
@@ -3759,6 +3853,8 @@ function WhatsAppSettingsPanel({ supabase }: { supabase: ReturnType<typeof creat
   const [employees, setEmployees] = useState<WpEmployee[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [enabled, setEnabled] = useState(false);
+  const [template, setTemplate] = useState("");
+  const [selectedTrigger, setSelectedTrigger] = useState("requisition_created");
   const [messages, setMessages] = useState<WpMessage[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -3781,7 +3877,7 @@ function WhatsAppSettingsPanel({ supabase }: { supabase: ReturnType<typeof creat
     if (!supabase) return;
     const [empRes, recRes, msgRes] = await Promise.all([
       supabase.rpc("wp_list_employees"),
-      supabase.rpc("wp_get_requisition_recipients"),
+      supabase.rpc("wp_get_notification_rule", { p_event_type: selectedTrigger }),
       supabase.rpc("wp_get_recent_messages", { p_limit: 15 }),
     ]);
     if (empRes.error) setError(empRes.error.message);
@@ -3790,10 +3886,11 @@ function WhatsAppSettingsPanel({ supabase }: { supabase: ReturnType<typeof creat
     if (!recRes.error && recRes.data) {
       const config = recRes.data as WpRecipientsConfig;
       setEnabled(Boolean(config.enabled));
+      setTemplate(config.template ?? "");
       setSelectedIds(new Set((config.recipients ?? []).map((r) => r.employee_id)));
     }
     if (!msgRes.error) setMessages((msgRes.data as WpMessage[] | null) ?? []);
-  }, [supabase]);
+  }, [supabase, selectedTrigger]);
 
   useEffect(() => {
     let active = true;
@@ -3825,8 +3922,10 @@ function WhatsAppSettingsPanel({ supabase }: { supabase: ReturnType<typeof creat
     if (!supabase) return;
     setSaving(true);
     setError(null);
-    const { error: saveError } = await supabase.rpc("wp_save_requisition_recipients", {
+    const { error: saveError } = await supabase.rpc("wp_save_notification_rule", {
+      p_event_type: selectedTrigger,
       p_enabled: enabled,
+      p_template: template.trim(),
       p_employee_ids: Array.from(selectedIds),
     });
     setSaving(false);
@@ -3922,11 +4021,32 @@ function WhatsAppSettingsPanel({ supabase }: { supabase: ReturnType<typeof creat
         </div>
       </div>
 
-      {/* Destinatarios de "Nueva requisición" */}
+      {/* Configuración de Notificaciones de Requisición */}
       <div className="rounded-2xl border border-[#E5DED7] bg-white p-6">
-        <div className="flex flex-col gap-1 border-b border-[#EDE8E3] pb-4">
-          <h3 className="text-base font-extrabold text-stone-950">Notificación: nueva requisición</h3>
-          <p className="text-sm text-stone-500">Estas personas recibirán un WhatsApp cada vez que se cree una requisición.</p>
+        <div className="flex flex-col gap-4 border-b border-[#EDE8E3] pb-4">
+          <div className="flex flex-col gap-1">
+            <h3 className="text-base font-extrabold text-stone-950">Configuración de Notificaciones de Requisición</h3>
+            <p className="text-sm text-stone-500">Personaliza los mensajes de WhatsApp y destinatarios según cada evento.</p>
+          </div>
+          
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-bold uppercase tracking-wider text-stone-500">Evento Trigger</label>
+            <select
+              value={selectedTrigger}
+              onChange={(event) => {
+                setSelectedTrigger(event.target.value);
+                setSavedAt(null);
+              }}
+              className="field-input bg-white"
+            >
+              <option value="requisition_created">Nueva Requisición Creada</option>
+              <option value="requisition_status_changed">Cualquier Cambio de Estado</option>
+              <option value="requisition_status_urgente">Requisición marcada como Urgente</option>
+              <option value="requisition_status_revisada">Requisición marcada como Revisada</option>
+              <option value="requisition_status_aprobada">Requisición Aprobada</option>
+              <option value="requisition_status_cancelada">Requisición Cancelada</option>
+            </select>
+          </div>
         </div>
 
         <label className="mt-4 flex items-center gap-3">
@@ -3936,43 +4056,73 @@ function WhatsAppSettingsPanel({ supabase }: { supabase: ReturnType<typeof creat
             onChange={(event) => { setEnabled(event.target.checked); setSavedAt(null); }}
             className="h-4 w-4 accent-[#B45309]"
           />
-          <span className="text-sm font-semibold text-stone-800">Activar esta notificación</span>
+          <span className="text-sm font-bold text-stone-800">Activar notificaciones para este evento</span>
         </label>
 
-        <div className="mt-4">
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar empleado por nombre o teléfono…"
-            className="field-input"
+        <div className="mt-4 flex flex-col gap-1.5">
+          <label className="text-xs font-bold uppercase tracking-wider text-stone-500">Cuerpo del Mensaje (Plantilla)</label>
+          <textarea
+            value={template}
+            onChange={(event) => { setTemplate(event.target.value); setSavedAt(null); }}
+            placeholder="Escribe el cuerpo del mensaje..."
+            className="field-input min-h-[120px] resize-y font-mono text-sm"
           />
+          <p className="mt-1 text-xs text-stone-500">
+            Puedes usar los siguientes placeholders:
+          </p>
+          <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-stone-50 p-2.5 text-[11px] text-stone-600 border border-stone-100">
+            <div><code>{"{{folio}}"}</code>: Folio (ej. REQ-1234)</div>
+            <div><code>{"{{location}}"}</code>: Sucursal</div>
+            <div><code>{"{{area}}"}</code>: Área solicitante</div>
+            <div><code>{"{{request_type}}"}</code>: Tipo de solicitud</div>
+            <div><code>{"{{status}}"}</code>: Estado actual</div>
+            <div><code>{"{{requester}}"}</code>: Nombre del solicitante</div>
+            <div><code>{"{{needed_by}}"}</code>: Fecha requerida</div>
+            <div><code>{"{{notes}}"}</code>: Notas generales o nota de revisión</div>
+            <div><code>{"{{old_status}}"}</code>: Estado anterior (cambios de estado)</div>
+          </div>
         </div>
 
-        <div className="mt-3 max-h-72 overflow-y-auto rounded-lg border border-[#EDE8E3]">
-          {loading ? (
-            <p className="p-4 text-sm text-stone-500">Cargando empleados…</p>
-          ) : filteredEmployees.length === 0 ? (
-            <p className="p-4 text-sm text-stone-500">Sin empleados que coincidan.</p>
-          ) : (
-            filteredEmployees.map((emp) => (
-              <label
-                key={emp.id}
-                className={`flex items-center justify-between gap-3 border-b border-[#F1ECE7] px-3 py-2 last:border-b-0 ${emp.has_phone ? "cursor-pointer hover:bg-[#FAF7F4]" : "cursor-not-allowed opacity-55"}`}
-              >
-                <span className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    disabled={!emp.has_phone}
-                    checked={selectedIds.has(emp.id)}
-                    onChange={() => toggleEmployee(emp.id)}
-                    className="h-4 w-4 accent-[#B45309]"
-                  />
-                  <span className="text-sm font-medium text-stone-800">{emp.label}</span>
-                </span>
-                <span className="text-xs text-stone-500">{emp.has_phone ? emp.telefono : "sin teléfono"}</span>
-              </label>
-            ))
-          )}
+        <div className="mt-5 border-t border-[#EDE8E3] pt-4">
+          <div className="flex flex-col gap-1 mb-3">
+            <h4 className="text-sm font-extrabold text-stone-900">Destinatarios</h4>
+            <p className="text-xs text-stone-500">Selecciona quiénes recibirán la notificación de WhatsApp para este evento.</p>
+          </div>
+          <div className="mt-3">
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Buscar empleado por nombre o teléfono…"
+              className="field-input"
+            />
+          </div>
+
+          <div className="mt-3 max-h-72 overflow-y-auto rounded-lg border border-[#EDE8E3]">
+            {loading ? (
+              <p className="p-4 text-sm text-stone-500">Cargando empleados…</p>
+            ) : filteredEmployees.length === 0 ? (
+              <p className="p-4 text-sm text-stone-500">Sin empleados que coincidan.</p>
+            ) : (
+              filteredEmployees.map((emp) => (
+                <label
+                  key={emp.id}
+                  className={`flex items-center justify-between gap-3 border-b border-[#F1ECE7] px-3 py-2 last:border-b-0 ${emp.has_phone ? "cursor-pointer hover:bg-[#FAF7F4]" : "cursor-not-allowed opacity-55"}`}
+                >
+                  <span className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      disabled={!emp.has_phone}
+                      checked={selectedIds.has(emp.id)}
+                      onChange={() => toggleEmployee(emp.id)}
+                      className="h-4 w-4 accent-[#B45309]"
+                    />
+                    <span className="text-sm font-medium text-stone-800">{emp.label}</span>
+                  </span>
+                  <span className="text-xs text-stone-500">{emp.has_phone ? emp.telefono : "sin teléfono"}</span>
+                </label>
+              ))
+            )}
+          </div>
         </div>
 
         <div className="mt-4 flex items-center justify-between">
