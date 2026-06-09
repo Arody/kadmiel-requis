@@ -23,7 +23,7 @@ type ViewId =
 
 type UserRoleName = "super_admin" | "branch_admin" | "operative" | "app_user";
 type RequisitionRequestType = "ordinaria" | "urgente" | "programada";
-type RequisitionStatus = "pendiente" | "urgente" | "revisada" | "aprobada" | "cancelada";
+type RequisitionStatus = "pendiente" | "urgente" | "revisada" | "aprobada" | "cancelada" | "completado" | "completada";
 type PurchaseOrderStatus = "pendiente" | "urgente" | "aprobado" | "completado" | "cancelado" | "parcial";
 type ReceivingStatus = "pendiente" | "recibida" | "en_almacen";
 
@@ -4024,7 +4024,7 @@ function WhatsAppSettingsPanel({ supabase }: { supabase: ReturnType<typeof creat
       <div className="rounded-2xl border border-[#E5DED7] bg-white p-6">
         <div className="flex flex-col gap-4 border-b border-[#EDE8E3] pb-4">
           <div className="flex flex-col gap-1">
-            <h3 className="text-base font-extrabold text-stone-950">Configuración de Notificaciones de Requisición</h3>
+            <h3 className="text-base font-extrabold text-stone-950">Configuración de Notificaciones de WhatsApp</h3>
             <p className="text-sm text-stone-500">Personaliza los mensajes de WhatsApp y destinatarios según cada evento.</p>
           </div>
           
@@ -4038,12 +4038,41 @@ function WhatsAppSettingsPanel({ supabase }: { supabase: ReturnType<typeof creat
               }}
               className="field-input bg-white"
             >
-              <option value="requisition_created">Nueva Requisición Creada</option>
-              <option value="requisition_status_changed">Cualquier Cambio de Estado</option>
-              <option value="requisition_status_urgente">Requisición marcada como Urgente</option>
-              <option value="requisition_status_revisada">Requisición marcada como Revisada</option>
-              <option value="requisition_status_aprobada">Requisición Aprobada</option>
-              <option value="requisition_status_cancelada">Requisición Cancelada</option>
+              <optgroup label="Requisiciones">
+                <option value="requisition_created">Nueva Requisición Creada</option>
+                <option value="requisition_status_changed">Cualquier Cambio de Estado (Requi)</option>
+                <option value="requisition_status_urgente">Requisición marcada como Urgente</option>
+                <option value="requisition_status_revisada">Requisición marcada como Revisada</option>
+                <option value="requisition_status_aprobada">Requisición Aprobada</option>
+                <option value="requisition_status_cancelada">Requisición Cancelada</option>
+              </optgroup>
+              <optgroup label="Compras">
+                <option value="purchase_order_created">Nueva Orden de Compra Creada</option>
+                <option value="purchase_order_status_changed">Cualquier Cambio de Estado (Compra)</option>
+                <option value="purchase_order_status_aprobado">Orden de Compra Aprobada</option>
+                <option value="purchase_order_status_completado">Orden de Compra Completada</option>
+                <option value="purchase_order_status_cancelado">Orden de Compra Cancelada</option>
+              </optgroup>
+              <optgroup label="Recepciones">
+                <option value="receipt_created">Nueva Recepción Iniciada</option>
+                <option value="receipt_status_changed">Cualquier Cambio de Estado (Recepción)</option>
+                <option value="receipt_status_recibida">Recepción Recibida</option>
+                <option value="receipt_status_en_almacen">Recepción en Almacén (Cerrada)</option>
+                <option value="receipt_has_differences">Recepción Registrada con Diferencias</option>
+              </optgroup>
+              <optgroup label="Traspasos">
+                <option value="transfer_created">Nuevo Traspaso Creado</option>
+                <option value="transfer_status_changed">Cualquier Cambio de Estado (Traspaso)</option>
+                <option value="transfer_status_en_transito">Traspaso Enviado (En Tránsito)</option>
+                <option value="transfer_status_completado">Traspaso Completado</option>
+                <option value="transfer_status_cancelado">Traspaso Cancelado</option>
+              </optgroup>
+              <optgroup label="Operaciones">
+                <option value="production_lot_created">Lote de Producción Registrado</option>
+              </optgroup>
+              <optgroup label="Mermas y Pérdidas">
+                <option value="waste_entry_created">Pérdida/Merma/Caducidad Registrada</option>
+              </optgroup>
             </select>
           </div>
         </div>
