@@ -395,7 +395,6 @@ const PURCHASE_ORDER_STATUS_OPTIONS: Array<[PurchaseOrderStatus, string]> = [
   ["pendiente", "Pendiente"],
   ["urgente", "Urgente"],
   ["aprobado", "Aprobada"],
-  ["completado", "Completada"],
   ["cancelado", "Cancelada"],
 ];
 
@@ -2842,14 +2841,14 @@ function PurchasesView({
   const [error, setError] = useState<string | null>(null);
   const canManagePurchases = role?.role === "super_admin" || role?.role === "branch_admin" || normalize(role?.department ?? "") === "contabilidad";
   const visible = purchaseOrders.filter((order) => {
-    if (order.status === "cancelado") return false;
+    if (order.status === "completado") return false;
     if (filter === "todas") return true;
     return order.status === filter;
   });
   const pending = purchaseOrders.filter((order) => order.status === "pendiente");
   const urgent = purchaseOrders.filter((order) => order.status === "urgente");
   const approved = purchaseOrders.filter((order) => order.status === "aprobado");
-  const completed = purchaseOrders.filter((order) => order.status === "completado");
+  const cancelled = purchaseOrders.filter((order) => order.status === "cancelado");
   const visibleTotal = visible.reduce((sum, order) => sum + Number(order.estimated_total ?? 0), 0);
 
   function getDraftStatus(order: PurchaseOrderRow) {
@@ -2910,10 +2909,10 @@ function PurchasesView({
         <KpiCard label="Pendientes" value={pending.length} sub="por evaluar" accent />
         <KpiCard label="Urgentes" value={urgent.length} sub="prioridad de compra" alert={urgent.length > 0} />
         <KpiCard label="Aprobadas" value={approved.length} sub="con fondos" />
-        <KpiCard label="Completadas" value={completed.length} sub="cerradas" />
+        <KpiCard label="Canceladas" value={cancelled.length} sub="anuladas" />
         <KpiCard label="Valor filtrado" value={formatCurrency(visibleTotal)} sub="cantidad x precio total" />
       </div>
-      <Segmented value={filter} onChange={(value) => setFilter(value as PurchaseOrderStatus | "todas")} options={[["pendiente", "Pendientes"], ["urgente", "Urgentes"], ["aprobado", "Aprobadas"], ["completado", "Completadas"], ["todas", "Todas"]]} />
+      <Segmented value={filter} onChange={(value) => setFilter(value as PurchaseOrderStatus | "todas")} options={[["todas", "Todas"], ["pendiente", "Pendientes"], ["urgente", "Urgentes"], ["aprobado", "Aprobadas"], ["cancelado", "Canceladas"]]} />
       {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
       <Card className="mt-5 p-0">
         <div className="overflow-x-auto">
