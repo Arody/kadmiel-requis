@@ -19,6 +19,8 @@ type ViewId =
   | "Merma"
   | "Catalogo"
   | "Produccion"
+  | "Calidad"
+  | "MermaPV"
   | "Ajustes";
 
 type UserRoleName = "super_admin" | "branch_admin" | "operative" | "app_user";
@@ -296,11 +298,18 @@ type ProductionStockProduct = {
   location_name: string;
   production_date: string;
   produced_quantity: number | string;
+  is_custom?: boolean;
 };
+
+const LOT_UNITS = ["pieza", "L", "ml", "Kg", "g"] as const;
+type LotUnit = (typeof LOT_UNITS)[number];
 
 type ProductionBufferItem = {
   product: ProductionStockProduct;
   quantity: number;
+  unit: string;
+  is_custom?: boolean;
+  custom_name?: string;
 };
 
 type ProductionLotSummary = {
@@ -314,6 +323,8 @@ type ProductionLotSummary = {
   created_at: string;
   items_count: number | string;
   total_quantity: number | string;
+  is_verified?: boolean;
+  verification_folio?: string | null;
 };
 
 type ProductionLotDetailItem = {
@@ -326,6 +337,7 @@ type ProductionLotDetailItem = {
   image_url: string | null;
   price: number | string;
   quantity: number | string;
+  unit?: string;
 };
 
 type ProductionLotDetail = {
@@ -339,6 +351,200 @@ type ProductionLotDetail = {
   items: ProductionLotDetailItem[];
 };
 
+type QualityVerificationSummary = {
+  verification_id: string;
+  folio: string;
+  lot_id: string | null;
+  lot_folio: string | null;
+  location_id: string;
+  location_name: string;
+  verification_date: string;
+  status: string;
+  has_discrepancies: boolean;
+  total_declared: number | string;
+  total_point_of_sale: number | string;
+  total_stored_elsewhere: number | string;
+  general_notes: string | null;
+  verified_by_name: string;
+  items_count: number | string;
+  is_merma_declared?: boolean;
+  merma_folio?: string | null;
+  created_at: string;
+};
+
+type QualityVerificationItemDetail = {
+  id?: string;
+  lot_item_id?: string | null;
+  finished_product_id: number;
+  product_name: string;
+  description: string | null;
+  packaging: string | null;
+  category: string | null;
+  subcategory: string | null;
+  image_url: string | null;
+  declared_quantity: number;
+  point_of_sale_quantity: number;
+  difference_quantity: number;
+  unit?: string;
+  storage_location: string | null;
+  storage_notes: string | null;
+  is_matched?: boolean;
+};
+
+type QualityVerificationDetail = {
+  verification_id: string;
+  folio: string;
+  lot_id: string | null;
+  lot_folio: string | null;
+  location_id: string;
+  location_name: string;
+  verification_date: string;
+  status: string;
+  has_discrepancies: boolean;
+  total_declared: number;
+  total_point_of_sale: number;
+  total_stored_elsewhere: number;
+  general_notes: string | null;
+  verified_by_name: string;
+  created_at: string;
+  items: QualityVerificationItemDetail[];
+};
+
+type QualityDraftItem = {
+  finished_product_id: number;
+  product_name: string;
+  description: string | null;
+  packaging: string | null;
+  category: string | null;
+  subcategory: string | null;
+  image_url: string | null;
+  declared_quantity: number;
+  point_of_sale_quantity: number;
+  unit: string;
+  storage_location: string;
+  storage_notes: string;
+  lot_item_id: string | null;
+};
+
+const QUALITY_STORAGE_LOCATIONS = [
+  "Cámara Fría Central",
+  "Bodega de Producto Terminado",
+  "Almacén General (Tránsito)",
+  "Congelador de Sucursal",
+  "Merma / Dañado en Transporte",
+  "Re-empaque / En Proceso",
+  "Otra ubicación",
+];
+
+const MERMA_PV_REASONS = [
+  "No vendido / Fin de día o turno",
+  "Caducado / Fecha de consumo vencida",
+  "Dañado en vitrina / mostrador",
+  "Muestra / Degustación a clientes",
+  "Manipulación / Caída accidental",
+  "Defecto de horneo / presentación",
+  "Otro motivo",
+] as const;
+
+type MermaPvReason = (typeof MERMA_PV_REASONS)[number];
+
+const MERMA_PV_DESTINATIONS = [
+  { id: "desecho", label: "🗑️ Desecho / Basura", desc: "Pérdida total" },
+  { id: "recuperacion", label: "♻️ Recuperación", desc: "Reproceso / Reutilizable" },
+] as const;
+
+type MermaPvDestination = "desecho" | "recuperacion";
+
+const RECOVERY_ACTIONS = [
+  "Pan molido / Rallado",
+  "Budín / Repostería secundaria",
+  "Tostadas / Croutons",
+  "Degustación / Muestreo",
+  "Donación / Banco de alimentos",
+  "Alimento de animales / Composta",
+  "Otro reproceso",
+] as const;
+
+type MermaPvSummary = {
+  merma_record_id: string;
+  folio: string;
+  verification_id: string | null;
+  verification_folio: string | null;
+  location_id: string;
+  location_name: string;
+  merma_date: string;
+  total_received_pdv: number | string;
+  total_merma: number | string;
+  total_sold: number | string;
+  total_desecho: number | string;
+  total_recuperacion: number | string;
+  merma_percentage: number | string;
+  general_notes: string | null;
+  registered_by_name: string;
+  items_count: number | string;
+  created_at: string;
+};
+
+type MermaPvItemDetail = {
+  id?: string;
+  quality_item_id?: string | null;
+  finished_product_id: number;
+  product_name: string;
+  description: string | null;
+  packaging: string | null;
+  category: string | null;
+  subcategory: string | null;
+  image_url: string | null;
+  pdv_received_quantity: number;
+  merma_quantity: number;
+  sold_quantity: number;
+  unit: string;
+  destination: string;
+  recovery_action?: string | null;
+  reason: string;
+  notes: string | null;
+};
+
+type MermaPvDetail = {
+  merma_record_id: string;
+  folio: string;
+  verification_id: string | null;
+  verification_folio: string | null;
+  location_id: string;
+  location_name: string;
+  merma_date: string;
+  total_received_pdv: number;
+  total_merma: number;
+  total_sold: number;
+  total_desecho: number;
+  total_recuperacion: number;
+  merma_percentage: number;
+  general_notes: string | null;
+  registered_by_name: string;
+  created_at: string;
+  items: MermaPvItemDetail[];
+};
+
+type MermaPvDraftItem = {
+  quality_item_id: string | null;
+  verification_id?: string | null;
+  verification_folio?: string | null;
+  finished_product_id: number;
+  product_name: string;
+  description: string | null;
+  packaging: string | null;
+  category: string | null;
+  subcategory: string | null;
+  image_url: string | null;
+  pdv_received_quantity: number;
+  merma_quantity: number;
+  unit: string;
+  destination: MermaPvDestination;
+  recovery_action: string;
+  reason: string;
+  notes: string;
+};
+
 type SampleRecord = Record<string, string | number | boolean>;
 
 const NAV_ITEMS: Array<{ id: ViewId; label: string; icon: string; tag?: string }> = [
@@ -350,7 +556,9 @@ const NAV_ITEMS: Array<{ id: ViewId; label: string; icon: string; tag?: string }
   { id: "Traspasos", label: "Traspasos", icon: "M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" },
   { id: "Merma", label: "Merma", icon: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" },
   { id: "Catalogo", label: "Catálogo", icon: "M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" },
-  { id: "Produccion", label: "Operaciones", icon: "M17 8h1a4 4 0 0 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4ZM6 2v2M10 2v2M14 2v2", tag: "Sucursal" },
+  { id: "Produccion", label: "Producción", icon: "M17 8h1a4 4 0 0 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4ZM6 2v2M10 2v2M14 2v2", tag: "Sucursal" },
+  { id: "Calidad", label: "Calidad", icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z", tag: "Sucursal" },
+  { id: "MermaPV", label: "Merma PV", icon: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16", tag: "Sucursal" },
   { id: "Ajustes", label: "Ajustes", icon: "M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281zM15 12a3 3 0 11-6 0 3 3 0 016 0z", tag: "Administración" },
 ];
 
@@ -370,11 +578,16 @@ const STATUS: Record<string, { label: string; className: string }> = {
   recibida: { label: "Recibida", className: "bg-blue-100 text-blue-700" },
   en_almacen: { label: "En almacén", className: "bg-emerald-100 text-emerald-700" },
   diferencia: { label: "Con diferencia", className: "bg-red-100 text-red-700" },
+  coincide: { label: "Coincide 100%", className: "bg-emerald-100 text-emerald-700" },
+  con_diferencia: { label: "Con diferencia", className: "bg-amber-100 text-amber-700" },
   cuidado_especial: { label: "Cuidado especial", className: "bg-amber-100 text-amber-700" },
   ordinaria: { label: "Ordinaria", className: "bg-stone-100 text-stone-600" },
   programada: { label: "Programada", className: "bg-sky-100 text-sky-700" },
   caducidad: { label: "Caducidad", className: "bg-amber-100 text-amber-700" },
   merma: { label: "Merma", className: "bg-red-100 text-red-700" },
+  sin_merma: { label: "100% Vendido (0 Merma)", className: "bg-emerald-100 text-emerald-700" },
+  merma_parcial: { label: "Merma Parcial", className: "bg-amber-100 text-amber-700" },
+  merma_alta: { label: "Merma Alta", className: "bg-red-100 text-red-700" },
 };
 
 const REQUEST_TYPE_OPTIONS: Array<[RequisitionRequestType, string]> = [
@@ -714,6 +927,22 @@ export default function SupplyOsApp() {
           )}
           {view === "Produccion" && (
             <ProductionView
+              supabase={supabase}
+              locations={locations}
+              selectedLocation={selectedLocation}
+              role={role}
+            />
+          )}
+          {view === "Calidad" && (
+            <QualityView
+              supabase={supabase}
+              locations={locations}
+              selectedLocation={selectedLocation}
+              role={role}
+            />
+          )}
+          {view === "MermaPV" && (
+            <MermaPvView
               supabase={supabase}
               locations={locations}
               selectedLocation={selectedLocation}
@@ -3453,6 +3682,60 @@ function ProductionView({
   const activeProducts = rows.filter((row) => Number(row.produced_quantity ?? 0) > 0).length;
   const bufferTotal = bufferItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
 
+  function addWildcardProduct() {
+    const locationId = targetLocationId ?? locations[0]?.id ?? "";
+    if (!locationId) {
+      setError("Selecciona una sucursal para agregar productos.");
+      return;
+    }
+
+    const customId = -Math.floor(Date.now() + Math.random() * 1000);
+    setError(null);
+    setSidebarOpen(true);
+    setBufferItems((current) => [
+      {
+        product: {
+          stock_lot_id: null,
+          finished_product_id: customId,
+          product: "",
+          description: "Producto especial fuera de catálogo (sin receta)",
+          packaging: "Venta individual",
+          category: "Especial",
+          subcategory: "Comodín",
+          image_url: null,
+          price: 0,
+          location_id: locationId,
+          location_name: locationLabel,
+          production_date: productionDate,
+          produced_quantity: 0,
+          is_custom: true,
+        },
+        quantity: 1,
+        unit: "pieza",
+        is_custom: true,
+        custom_name: "",
+      },
+      ...current,
+    ]);
+  }
+
+  function updateBufferCustomName(finishedProductId: number, customName: string) {
+    setBufferItems((current) =>
+      current.map((item) =>
+        item.product.finished_product_id === finishedProductId
+          ? {
+              ...item,
+              custom_name: customName,
+              product: {
+                ...item.product,
+                product: customName,
+              },
+            }
+          : item
+      )
+    );
+  }
+
   function addToBuffer(row: ProductionStockProduct) {
     const locationId = row.location_id ?? targetLocationId;
     if (!locationId) {
@@ -3473,6 +3756,7 @@ function ProductionView({
         {
           product: { ...row, location_id: locationId, location_name: row.location_name === "Todas" ? locationLabel : row.location_name },
           quantity: 1,
+          unit: "pieza",
         },
       ];
     });
@@ -3485,6 +3769,14 @@ function ProductionView({
     }
 
     setBufferItems((current) => current.map((item) => (item.product.finished_product_id === finishedProductId ? { ...item, quantity } : item)));
+  }
+
+  function updateBufferUnit(finishedProductId: number, unit: string) {
+    setBufferItems((current) =>
+      current.map((item) =>
+        item.product.finished_product_id === finishedProductId ? { ...item, unit } : item
+      )
+    );
   }
 
   function resetBuffer() {
@@ -3510,7 +3802,11 @@ function ProductionView({
     const payload = {
       p_items: bufferItems.map((item) => ({
         finished_product_id: item.product.finished_product_id,
+        product_name: (item.custom_name || item.product.product).trim() || "Producto Especial",
+        custom_name: (item.custom_name || item.product.product).trim() || "Producto Especial",
+        is_custom: item.is_custom || item.product.finished_product_id <= 0,
         quantity: Number(item.quantity || 0),
+        unit: item.unit || "pieza",
       })),
       p_notes: notes.trim(),
     };
@@ -3568,8 +3864,12 @@ function ProductionView({
         location_name: detail.location_name,
         production_date: detail.production_date,
         produced_quantity: item.quantity,
+        is_custom: item.finished_product_id <= 0,
       },
       quantity: Number(item.quantity || 0),
+      unit: item.unit || "pieza",
+      is_custom: item.finished_product_id <= 0,
+      custom_name: item.product,
     })));
     setSidebarOpen(true);
   }
@@ -3596,8 +3896,15 @@ function ProductionView({
   return (
     <div className="pb-24">
       <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <PageHeader title="Operaciones de sucursal" subtitle={`Producción diaria · ${locationLabel}`} />
+        <PageHeader title="Producción de sucursal" subtitle={`Producción diaria · ${locationLabel}`} />
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={addWildcardProduct}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2 text-xs font-black text-amber-950 transition hover:bg-amber-100 shadow-sm"
+          >
+            <span>✨ + Producto Comodín / Especial</span>
+          </button>
           <Button variant="secondary" disabled={loading} onClick={() => void loadRows()}>{loading ? "Actualizando..." : "Actualizar"}</Button>
           <Button onClick={() => setSidebarOpen(true)}>Lote del día ({bufferItems.length})</Button>
         </div>
@@ -3683,33 +3990,137 @@ function ProductionView({
             <Field label="Notas">
               <input value={notes} onChange={(event) => setNotes(event.target.value)} className="field-input mt-3" placeholder="Notas del lote" />
             </Field>
+
+            <button
+              type="button"
+              onClick={addWildcardProduct}
+              className="mt-3 w-full flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-amber-400 bg-amber-50/80 px-3 py-2 text-xs font-black text-amber-900 transition hover:bg-amber-100 shadow-sm"
+            >
+              <span>✨ + Agregar Producto Comodín (Sin receta)</span>
+            </button>
           </div>
 
           <div className="mt-4 space-y-3">
-            {bufferItems.map((item) => (
-              <div key={item.product.finished_product_id} className="rounded-xl border border-[#EDE8E3] bg-white p-3">
-                <div className="flex items-start gap-3">
-                  <ProductThumb product={item.product} />
-                  <div className="min-w-0 flex-1">
-                    <p className="line-clamp-2 text-sm font-extrabold text-stone-950">{item.product.product}</p>
-                    <p className="mt-1 truncate text-xs font-semibold text-stone-500">{item.product.packaging ?? "Sin empaque"}</p>
+            {bufferItems.map((item) => {
+              const isCustom = item.is_custom || item.product.finished_product_id <= 0;
+
+              if (isCustom) {
+                return (
+                  <div key={item.product.finished_product_id} className="rounded-xl border border-amber-300 bg-amber-50/40 p-3 shadow-sm">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-amber-500 text-[10px] font-black text-white">✨</span>
+                        <span className="text-[11px] font-black uppercase tracking-wider text-amber-900">
+                          Producto Comodín / Especial
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => updateBufferQuantity(item.product.finished_product_id, 0)}
+                        className="text-xl leading-none text-stone-400 transition hover:text-red-600"
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    <div className="mt-2">
+                      <label className="block text-[10px] font-extrabold uppercase tracking-wider text-stone-600 mb-1">
+                        Nombre del Producto:
+                      </label>
+                      <input
+                        type="text"
+                        value={item.custom_name ?? item.product.product}
+                        onChange={(e) => updateBufferCustomName(item.product.finished_product_id, e.target.value)}
+                        placeholder="Ej. Pastel de fresas especial, Baguette rústica..."
+                        className="field-input h-9 text-xs font-extrabold bg-white border-amber-300 focus:border-amber-500 text-stone-950"
+                        autoFocus={!item.custom_name}
+                      />
+                    </div>
+
+                    <div className="mt-3 flex items-center gap-2">
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => updateBufferQuantity(item.product.finished_product_id, item.quantity - 1)}
+                          className="flex h-9 w-9 items-center justify-center rounded-lg border border-amber-200 bg-white text-lg font-bold transition hover:bg-amber-100"
+                        >
+                          -
+                        </button>
+                        <input
+                          value={item.quantity}
+                          onChange={(event) => updateBufferQuantity(item.product.finished_product_id, Number(event.target.value || 0))}
+                          type="number"
+                          min="0"
+                          step="any"
+                          className="field-input h-9 w-20 text-center font-bold bg-white border-amber-200"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => updateBufferQuantity(item.product.finished_product_id, item.quantity + 1)}
+                          className="flex h-9 w-9 items-center justify-center rounded-lg border border-amber-200 bg-white text-lg font-bold transition hover:bg-amber-100"
+                        >
+                          +
+                        </button>
+                      </div>
+
+                      <select
+                        value={item.unit || "pieza"}
+                        onChange={(e) => updateBufferUnit(item.product.finished_product_id, e.target.value)}
+                        className="field-input h-9 flex-1 text-xs font-bold bg-white border-amber-200"
+                      >
+                        {LOT_UNITS.map((u) => (
+                          <option key={u} value={u}>
+                            {u}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <p className="mt-1.5 text-[10px] font-semibold text-stone-400">
+                      ℹ️ Sin receta: no descontará materias primas ni insumos.
+                    </p>
                   </div>
-                  <button type="button" onClick={() => updateBufferQuantity(item.product.finished_product_id, 0)} className="text-xl leading-none text-stone-300 transition hover:text-red-600">×</button>
+                );
+              }
+
+              return (
+                <div key={item.product.finished_product_id} className="rounded-xl border border-[#EDE8E3] bg-white p-3">
+                  <div className="flex items-start gap-3">
+                    <ProductThumb product={item.product} />
+                    <div className="min-w-0 flex-1">
+                      <p className="line-clamp-2 text-sm font-extrabold text-stone-950">{item.product.product}</p>
+                      <p className="mt-1 truncate text-xs font-semibold text-stone-500">{item.product.packaging ?? "Sin empaque"}</p>
+                    </div>
+                    <button type="button" onClick={() => updateBufferQuantity(item.product.finished_product_id, 0)} className="text-xl leading-none text-stone-300 transition hover:text-red-600">×</button>
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <div className="flex items-center gap-1">
+                      <button type="button" onClick={() => updateBufferQuantity(item.product.finished_product_id, item.quantity - 1)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#EDE8E3] text-lg font-bold transition hover:bg-stone-50">-</button>
+                      <input
+                        value={item.quantity}
+                        onChange={(event) => updateBufferQuantity(item.product.finished_product_id, Number(event.target.value || 0))}
+                        type="number"
+                        min="0"
+                        step="any"
+                        className="field-input h-9 w-20 text-center font-bold"
+                      />
+                      <button type="button" onClick={() => updateBufferQuantity(item.product.finished_product_id, item.quantity + 1)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#EDE8E3] text-lg font-bold transition hover:bg-stone-50">+</button>
+                    </div>
+                    <select
+                      value={item.unit || "pieza"}
+                      onChange={(e) => updateBufferUnit(item.product.finished_product_id, e.target.value)}
+                      className="field-input h-9 flex-1 text-xs font-bold bg-white"
+                    >
+                      {LOT_UNITS.map((u) => (
+                        <option key={u} value={u}>
+                          {u}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <div className="mt-3 flex items-center gap-2">
-                  <button type="button" onClick={() => updateBufferQuantity(item.product.finished_product_id, item.quantity - 1)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#EDE8E3] text-lg font-bold">-</button>
-                  <input
-                    value={item.quantity}
-                    onChange={(event) => updateBufferQuantity(item.product.finished_product_id, Number(event.target.value || 0))}
-                    type="number"
-                    min="0"
-                    step="1"
-                    className="field-input h-9 text-center"
-                  />
-                  <button type="button" onClick={() => updateBufferQuantity(item.product.finished_product_id, item.quantity + 1)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#EDE8E3] text-lg font-bold">+</button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {bufferItems.length === 0 ? <EmptyState message="Presiona productos para agregarlos al lote" /> : null}
@@ -3752,6 +4163,1796 @@ function ProductionView({
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function QualityView({
+  supabase,
+  locations,
+  selectedLocation,
+  role,
+}: {
+  supabase: ReturnType<typeof createBrowserSupabaseClient>;
+  locations: LocationRow[];
+  selectedLocation: string;
+  role: UserRole | null;
+}) {
+  const [activeTab, setActiveTab] = useState<"verificar" | "historial">("verificar");
+  const [verificationDate, setVerificationDate] = useState(formatTodayForFilename());
+  const [search, setSearch] = useState("");
+  const [selectedLotId, setSelectedLotId] = useState<string>("all");
+  const [productionLots, setProductionLots] = useState<ProductionLotSummary[]>([]);
+  const [items, setItems] = useState<QualityDraftItem[]>([]);
+  const [generalNotes, setGeneralNotes] = useState("");
+  const [verifications, setVerifications] = useState<QualityVerificationSummary[]>([]);
+  const [inspectingVerification, setInspectingVerification] = useState<QualityVerificationDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [lotsLoading, setLotsLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [inspectLoadingId, setInspectLoadingId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const selectedLocationId = selectedLocation === "Todas"
+    ? role?.role === "super_admin"
+      ? null
+      : locations.find((location) => normalize(location.name) === normalize(role?.sucursal ?? ""))?.id ?? null
+    : locations.find((location) => location.name === selectedLocation)?.id ?? null;
+
+  const targetLocationId = useMemo(() => {
+    if (selectedLocationId) return selectedLocationId;
+    if (selectedLotId !== "all") {
+      const lot = productionLots.find((l) => l.lot_id === selectedLotId);
+      if (lot?.location_id) return lot.location_id;
+    }
+    const uniqueLocs = Array.from(new Set(productionLots.map((l) => l.location_id).filter(Boolean)));
+    if (uniqueLocs.length === 1) return uniqueLocs[0];
+    return locations.find((l) => l.name === "Teran")?.id ?? locations[0]?.id ?? null;
+  }, [selectedLocationId, selectedLotId, productionLots, locations]);
+
+  const locationLabel = selectedLocation === "Todas" && role?.role !== "super_admin" ? role?.sucursal ?? "Mi sucursal" : selectedLocation;
+
+  const loadProductionLots = useCallback(async () => {
+    if (!supabase) return;
+    setLotsLoading(true);
+    const { data, error: lotsErr } = await supabase.rpc("list_abastecimiento_production_lots", {
+      p_location_id: selectedLocationId,
+      p_date_from: verificationDate || null,
+      p_date_to: verificationDate || null,
+      p_limit: 50,
+    });
+    setLotsLoading(false);
+    if (!lotsErr && data) {
+      setProductionLots((data as ProductionLotSummary[] | null) ?? []);
+    } else {
+      setProductionLots([]);
+    }
+  }, [selectedLocationId, supabase, verificationDate]);
+
+  const loadProductionToVerify = useCallback(async () => {
+    if (!supabase) return;
+    setLoading(true);
+    setError(null);
+
+    const { data, error: pendingErr } = await supabase.rpc("list_abastecimiento_pending_quality_items", {
+      p_location_id: selectedLocationId,
+      p_date: verificationDate || null,
+      p_lot_id: selectedLotId !== "all" ? selectedLotId : null,
+    });
+    setLoading(false);
+
+    if (pendingErr) {
+      setError(pendingErr.message);
+      setItems([]);
+      return;
+    }
+
+    type QualityPendingProduct = {
+      lot_item_id: string | null;
+      finished_product_id: number;
+      product_name: string;
+      description: string | null;
+      packaging: string | null;
+      category: string | null;
+      subcategory: string | null;
+      image_url: string | null;
+      declared_quantity: number;
+      point_of_sale_quantity: number;
+      unit: string;
+    };
+
+    const rawList = (data as QualityPendingProduct[] | null) ?? [];
+    const initialItems: QualityDraftItem[] = rawList.map((it) => ({
+      finished_product_id: it.finished_product_id,
+      product_name: it.product_name,
+      description: it.description,
+      packaging: it.packaging,
+      category: it.category,
+      subcategory: it.subcategory,
+      image_url: it.image_url,
+      declared_quantity: Number(it.declared_quantity || 0),
+      point_of_sale_quantity: Number(it.point_of_sale_quantity || 0),
+      unit: it.unit || "pieza",
+      storage_location: QUALITY_STORAGE_LOCATIONS[0],
+      storage_notes: "",
+      lot_item_id: it.lot_item_id,
+    }));
+    setItems(initialItems);
+  }, [selectedLocationId, selectedLotId, supabase, verificationDate]);
+
+  const loadVerifications = useCallback(async () => {
+    if (!supabase) return;
+    setHistoryLoading(true);
+    const { data, error: histErr } = await supabase.rpc("list_abastecimiento_quality_verifications", {
+      p_location_id: selectedLocationId,
+      p_date_from: null,
+      p_date_to: null,
+      p_limit: 50,
+    });
+    setHistoryLoading(false);
+    if (histErr) {
+      setError(histErr.message);
+      setVerifications([]);
+      return;
+    }
+    setVerifications((data as QualityVerificationSummary[] | null) ?? []);
+  }, [selectedLocationId, supabase]);
+
+  useEffect(() => {
+    void loadProductionLots();
+    void loadProductionToVerify();
+    void loadVerifications();
+  }, [loadProductionLots, loadProductionToVerify, loadVerifications]);
+
+  const updateItemPdvQty = (finishedProductId: number, value: number) => {
+    const safeQty = Math.max(0, isNaN(value) ? 0 : value);
+    setItems((current) =>
+      current.map((it) =>
+        it.finished_product_id === finishedProductId
+          ? { ...it, point_of_sale_quantity: safeQty }
+          : it
+      )
+    );
+  };
+
+  const updateItemUnit = (finishedProductId: number, unit: string) => {
+    setItems((current) =>
+      current.map((it) =>
+        it.finished_product_id === finishedProductId
+          ? { ...it, unit }
+          : it
+      )
+    );
+  };
+
+  const updateItemStorageLocation = (finishedProductId: number, location: string) => {
+    setItems((current) =>
+      current.map((it) =>
+        it.finished_product_id === finishedProductId
+          ? { ...it, storage_location: location }
+          : it
+      )
+    );
+  };
+
+  const updateItemStorageNotes = (finishedProductId: number, notesText: string) => {
+    setItems((current) =>
+      current.map((it) =>
+        it.finished_product_id === finishedProductId
+          ? { ...it, storage_notes: notesText }
+          : it
+      )
+    );
+  };
+
+  const saveVerification = async () => {
+    if (!supabase || saving) return;
+    if (!targetLocationId) {
+      setError("Selecciona una sucursal para guardar la verificación de calidad.");
+      return;
+    }
+    if (items.length === 0) {
+      setError("No hay productos pendientes por verificar.");
+      return;
+    }
+
+    const itemsMissingNotes = items.filter(
+      (it) => it.point_of_sale_quantity < it.declared_quantity && !it.storage_notes.trim()
+    );
+    if (itemsMissingNotes.length > 0) {
+      setError(
+        `Por favor escribe la observación de dónde queda almacenado el resto de: ${itemsMissingNotes
+          .map((i) => i.product_name)
+          .join(", ")}.`
+      );
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setSuccessMessage(null);
+
+    const payload = {
+      p_location_id: targetLocationId,
+      p_verification_date: verificationDate || null,
+      p_lot_id: selectedLotId !== "all" ? selectedLotId : null,
+      p_notes: generalNotes.trim() || null,
+      p_items: items.map((it) => ({
+        finished_product_id: it.finished_product_id,
+        declared_quantity: it.declared_quantity,
+        point_of_sale_quantity: it.point_of_sale_quantity,
+        unit: it.unit || "pieza",
+        storage_location: it.point_of_sale_quantity !== it.declared_quantity ? it.storage_location : null,
+        storage_notes: it.point_of_sale_quantity !== it.declared_quantity ? it.storage_notes.trim() : null,
+        lot_item_id: it.lot_item_id,
+      })),
+    };
+
+    const { data, error: saveErr } = await supabase.rpc(
+      "save_abastecimiento_quality_verification",
+      payload
+    );
+    setSaving(false);
+
+    if (saveErr) {
+      setError(saveErr.message);
+      return;
+    }
+
+    const res = data as { folio?: string; has_discrepancies?: boolean };
+    setSuccessMessage(
+      `✓ Registro de Calidad ${res?.folio ?? ""} guardado con éxito ${
+        res?.has_discrepancies ? "con registro de resguardo/almacén" : "(100% en punto de venta)"
+      }.`
+    );
+    setGeneralNotes("");
+    await Promise.all([loadVerifications(), loadProductionLots(), loadProductionToVerify()]);
+  };
+
+  const inspectVerification = async (verificationId: string) => {
+    if (!supabase || inspectLoadingId) return;
+    setInspectLoadingId(verificationId);
+    setError(null);
+    const { data, error: inspErr } = await supabase.rpc("get_abastecimiento_quality_verification", {
+      p_verification_id: verificationId,
+    });
+    setInspectLoadingId(null);
+    if (inspErr) {
+      setError(inspErr.message);
+      return;
+    }
+    setInspectingVerification(data as QualityVerificationDetail);
+  };
+
+  const totalDeclared = items.reduce((sum, it) => sum + Number(it.declared_quantity || 0), 0);
+  const totalPdv = items.reduce((sum, it) => sum + Number(it.point_of_sale_quantity || 0), 0);
+  const totalStored = items.reduce(
+    (sum, it) => sum + Math.max(0, Number(it.declared_quantity || 0) - Number(it.point_of_sale_quantity || 0)),
+    0
+  );
+  const discrepancyCount = items.filter((it) => it.point_of_sale_quantity !== it.declared_quantity).length;
+  const matchPercentage = totalDeclared > 0 ? Math.min(100, Math.round((totalPdv / totalDeclared) * 100)) : 100;
+
+  const visibleItems = items.filter((it) =>
+    `${it.product_name} ${it.description ?? ""} ${it.packaging ?? ""} ${it.category ?? ""} ${it.subcategory ?? ""}`
+      .toLowerCase()
+      .includes(search.trim().toLowerCase())
+  );
+
+  return (
+    <div className="pb-24">
+      {/* Header */}
+      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <PageHeader
+          title="Control de Calidad y Punto de Venta"
+          subtitle={`Verificación de producto real en PDV vs producción declarada · ${locationLabel}`}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmented
+            value={activeTab}
+            onChange={(val) => {
+              setActiveTab(val as "verificar" | "historial");
+              setError(null);
+            }}
+            options={[
+              ["verificar", "Verificación PDV"],
+              ["historial", `Historial (${verifications.length})`],
+            ]}
+          />
+          <Button
+            variant="secondary"
+            disabled={loading || historyLoading}
+            onClick={() => {
+              void loadProductionLots();
+              void loadProductionToVerify();
+              void loadVerifications();
+            }}
+          >
+            {loading || historyLoading ? "Actualizando..." : "Actualizar"}
+          </Button>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard
+          label="Coincidencia en PDV"
+          value={`${matchPercentage}%`}
+          sub={`${formatNumber(totalPdv)} de ${formatNumber(totalDeclared)} unidades`}
+          accent={matchPercentage === 100 && totalDeclared > 0}
+          alert={matchPercentage < 100 && totalDeclared > 0}
+        />
+        <KpiCard
+          label="Producción Pendiente"
+          value={formatNumber(totalDeclared)}
+          sub={`${items.length} productos por verificar`}
+        />
+        <KpiCard
+          label="Llegó a Punto de Venta"
+          value={formatNumber(totalPdv)}
+          sub="Disponible en mostrador/PDV"
+        />
+        <KpiCard
+          label="En Reserva / Almacén"
+          value={formatNumber(totalStored)}
+          sub={`${discrepancyCount} productos con diferencia`}
+          alert={totalStored > 0}
+        />
+      </div>
+
+      {error ? (
+        <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+          {error}
+        </p>
+      ) : null}
+
+      {successMessage ? (
+        <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800 shadow-sm">
+          <span>{successMessage}</span>
+          <button type="button" onClick={() => setSuccessMessage(null)} className="text-emerald-600 hover:text-emerald-950 font-bold">✕</button>
+        </div>
+      ) : null}
+
+      {activeTab === "verificar" ? (
+        <>
+          {/* Controls Bar */}
+          <div className="mt-5 grid gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 md:grid-cols-[180px_1fr_1fr] md:items-end">
+            <Field label="Fecha de Producción">
+              <input
+                value={verificationDate}
+                onChange={(event) => setVerificationDate(event.target.value)}
+                type="date"
+                className="field-input"
+              />
+            </Field>
+
+            <Field label="Lote / Origen">
+              <select
+                value={selectedLotId}
+                onChange={(event) => setSelectedLotId(event.target.value)}
+                className="field-input"
+              >
+                <option value="all">📦 Toda la producción pendiente del día</option>
+                {productionLots.map((lot) => (
+                  <option key={lot.lot_id} value={lot.lot_id}>
+                    {lot.folio} · {lot.location_name} ({lot.items_count} productos - {formatNumber(lot.total_quantity)}) {lot.is_verified ? "· ✓ Ya verificado" : "· ⏳ Pendiente"}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="Buscar Producto">
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                className="field-input"
+                placeholder="Nombre, categoría, empaque..."
+              />
+            </Field>
+          </div>
+
+          {/* Products Verification Grid */}
+          {loading ? (
+            <div className="mt-6">
+              <EmptyState message="Cargando productos de producción para verificación..." />
+            </div>
+          ) : items.length === 0 ? (
+            <div className="mt-6 rounded-2xl border border-dashed border-[#DDD7D1] bg-[#FAFAF8] p-10 text-center">
+              <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
+                <Icon path="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </div>
+              <h3 className="text-base font-extrabold text-stone-900">✓ Sin productos pendientes por verificar</h3>
+              <p className="mx-auto mt-1 max-w-md text-xs font-medium text-stone-500">
+                Todos los productos elaborados para {locationLabel} en la fecha {verificationDate} ya han sido verificados y registrados en Punto de Venta.
+                Puedes consultar las recepciones guardadas en la pestaña de{" "}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("historial")}
+                  className="font-bold text-[#B45309] underline hover:text-[#92400E]"
+                >
+                  Historial ({verifications.length})
+                </button>.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-5 grid gap-4 lg:grid-cols-2">
+              {visibleItems.map((item) => {
+                const diff = item.declared_quantity - item.point_of_sale_quantity;
+                const isMatched = diff === 0;
+                const isShortage = diff > 0;
+                const unitLabel = item.unit || "pieza";
+
+                return (
+                  <div
+                    key={item.finished_product_id}
+                    className={`flex flex-col rounded-2xl border bg-white p-5 shadow-sm transition ${
+                      !isMatched
+                        ? "border-amber-300 ring-2 ring-amber-400/20 bg-[#FFFDF9]"
+                        : "border-[#EDE8E3] hover:border-[#D6C9BF] hover:shadow-md"
+                    }`}
+                  >
+                    {/* Header: Fixed square thumbnail + product info + declared qty */}
+                    <div className="flex items-start gap-4">
+                      {item.image_url ? (
+                        <div
+                          aria-label={`Imagen de ${item.product_name}`}
+                          role="img"
+                          className="h-16 w-16 sm:h-20 sm:w-20 shrink-0 rounded-xl border border-[#EDE8E3] bg-[#F5F1EE] bg-cover bg-center shadow-inner"
+                          style={{ backgroundImage: `url(${item.image_url})` }}
+                        />
+                      ) : (
+                        <div className="flex h-16 w-16 sm:h-20 sm:w-20 shrink-0 items-center justify-center rounded-xl border border-[#EDE8E3] bg-[#F5F1EE] text-sm font-black text-[#B45309]">
+                          {getInitials(item.product_name)}
+                        </div>
+                      )}
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                          <div className="min-w-0">
+                            <h4 className="text-base font-extrabold text-stone-950 leading-snug">
+                              {item.product_name}
+                            </h4>
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              <span className="inline-flex items-center rounded-md bg-[#F5F1EE] px-2 py-0.5 text-xs font-semibold text-stone-600">
+                                {[item.category, item.subcategory].filter(Boolean).join(" · ") || "Producto terminado"}
+                              </span>
+                              {item.packaging ? (
+                                <span className="inline-flex items-center rounded-md bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-500">
+                                  {item.packaging}
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          <div className="shrink-0 self-start">
+                            <span className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-extrabold text-white shadow-sm">
+                              <span>Declarado:</span>
+                              <span className="text-amber-400 font-black">{formatNumber(item.declared_quantity)}</span>
+                              <span className="text-stone-300 font-medium">{unitLabel}</span>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Interactive Verification Row */}
+                    <div className="mt-4 rounded-xl bg-[#FAFAF8] p-3.5 border border-[#EDE8E3]/80">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div>
+                          <span className="block text-[10px] font-extrabold uppercase tracking-wider text-stone-500 mb-1">
+                            Llegó a Punto de Venta (PDV)
+                          </span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => updateItemPdvQty(item.finished_product_id, item.point_of_sale_quantity - 1)}
+                                className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#DDD7D1] bg-white text-base font-black text-stone-700 shadow-sm transition hover:bg-stone-100 active:scale-95"
+                              >
+                                −
+                              </button>
+                              <input
+                                type="number"
+                                min={0}
+                                step="any"
+                                value={item.point_of_sale_quantity}
+                                onChange={(e) => updateItemPdvQty(item.finished_product_id, Number(e.target.value))}
+                                className="h-9 w-20 rounded-lg border border-[#DDD7D1] bg-white text-center text-base font-black text-stone-950 shadow-inner focus:border-[#B45309] focus:outline-none focus:ring-2 focus:ring-[#B45309]/20"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => updateItemPdvQty(item.finished_product_id, item.point_of_sale_quantity + 1)}
+                                className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#DDD7D1] bg-white text-base font-black text-stone-700 shadow-sm transition hover:bg-stone-100 active:scale-95"
+                              >
+                                +
+                              </button>
+                            </div>
+                            <select
+                              value={item.unit || "pieza"}
+                              onChange={(e) => updateItemUnit(item.finished_product_id, e.target.value)}
+                              className="h-9 rounded-lg border border-[#DDD7D1] bg-white px-2.5 text-xs font-black text-stone-700 shadow-sm focus:border-[#B45309] focus:outline-none"
+                            >
+                              {LOT_UNITS.map((u) => (
+                                <option key={u} value={u}>
+                                  {u}
+                                </option>
+                              ))}
+                            </select>
+                            <span className="text-xs font-bold text-stone-500 whitespace-nowrap">
+                              de {formatNumber(item.declared_quantity)} {unitLabel}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="sm:text-right">
+                          <span className="block text-[10px] font-extrabold uppercase tracking-wider text-stone-500 mb-1">
+                            Estado de Recepción
+                          </span>
+                          <div>
+                            {isMatched ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-100 px-3 py-1 text-xs font-extrabold text-emerald-800 whitespace-nowrap">
+                                ✓ Coincide al 100%
+                              </span>
+                            ) : isShortage ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-3 py-1 text-xs font-extrabold text-amber-900 whitespace-nowrap">
+                                ⚠ Faltan {formatNumber(diff)} {unitLabel} en PDV
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-sky-300 bg-sky-100 px-3 py-1 text-xs font-extrabold text-sky-900 whitespace-nowrap">
+                                ℹ Excedente (+{formatNumber(Math.abs(diff))} {unitLabel})
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Discrepancy & Storage Location Capture */}
+                    {!isMatched ? (
+                      <div className="mt-3.5 rounded-xl border border-amber-300 bg-amber-50/80 p-4 shadow-sm">
+                        <div className="mb-2.5 flex items-center gap-2">
+                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-600 text-[11px] font-black text-white">
+                            !
+                          </span>
+                          <p className="text-xs font-black text-amber-950 uppercase tracking-wide">
+                            {isShortage
+                              ? `¿Dónde queda almacenado el restante (${formatNumber(diff)} ${unitLabel})?`
+                              : `Observación del excedente (+${formatNumber(Math.abs(diff))} ${unitLabel})`}
+                          </p>
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-[200px_1fr] sm:items-end">
+                          <div>
+                            <label className="mb-1 block text-[10px] font-extrabold uppercase tracking-wider text-amber-900">
+                              Ubicación de Resguardo
+                            </label>
+                            <select
+                              value={item.storage_location}
+                              onChange={(e) => updateItemStorageLocation(item.finished_product_id, e.target.value)}
+                              className="field-input h-10 text-xs font-bold bg-white border-amber-300 text-stone-900"
+                            >
+                              {QUALITY_STORAGE_LOCATIONS.map((loc) => (
+                                <option key={loc} value={loc}>
+                                  {loc}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="mb-1 block text-[10px] font-extrabold uppercase tracking-wider text-amber-900">
+                              Observación / Motivo de Almacenamiento <span className="text-red-600 font-bold">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={item.storage_notes}
+                              onChange={(e) => updateItemStorageNotes(item.finished_product_id, e.target.value)}
+                              placeholder={`Ej. Quedan ${formatNumber(diff)} ${unitLabel} en cámara fría por espacio en mostrador...`}
+                              className={`field-input h-10 text-xs bg-white ${
+                                isShortage && !item.storage_notes.trim()
+                                  ? "border-red-300 ring-2 ring-red-400/20 focus:border-red-500"
+                                  : "border-amber-300 focus:border-amber-500"
+                              }`}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Bottom Save Bar */}
+          {items.length > 0 ? (
+            <div className="mt-8 rounded-2xl border border-[#EDE8E3] bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="flex-1">
+                  <label className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.05em] text-stone-500">
+                    Observaciones Generales de la Verificación (Opcional)
+                  </label>
+                  <input
+                    value={generalNotes}
+                    onChange={(e) => setGeneralNotes(e.target.value)}
+                    placeholder="Turno matutino, estado general del producto, comentarios adicionales..."
+                    className="field-input h-10 text-sm"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="rounded-xl bg-[#F5F1EE] px-4 py-2 text-right">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Resumen</p>
+                    <p className="text-sm font-extrabold text-stone-950">
+                      PDV: <span className="text-[#B45309]">{formatNumber(totalPdv)}</span> / Decl: {formatNumber(totalDeclared)}
+                      {totalStored > 0 ? ` · Reserva: ${formatNumber(totalStored)}` : ""}
+                    </p>
+                  </div>
+
+                  <Button
+                    disabled={saving || items.length === 0 || !targetLocationId}
+                    onClick={() => void saveVerification()}
+                  >
+                    {saving ? "Guardando..." : "Guardar Verificación de Calidad"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        /* Historial Tab */
+        <div className="mt-5 rounded-2xl border border-[#EDE8E3] bg-white p-5 shadow-sm">
+          <SectionHeader
+            title="Historial de Auditorías y Verificaciones de Calidad"
+            actionLabel="Actualizar"
+            onAction={() => void loadVerifications()}
+          />
+
+          {historyLoading ? (
+            <EmptyState message="Cargando historial de verificaciones..." />
+          ) : verifications.length === 0 ? (
+            <EmptyState message="No hay verificaciones de calidad registradas para esta sucursal." />
+          ) : (
+            <DataTable
+              columns={[
+                ["folio", "Folio"],
+                ["fecha", "Fecha"],
+                ["sucursal", "Sucursal"],
+                ["origen", "Lote Origen"],
+                ["declarado", "Declarado"],
+                ["pdv", "En PDV"],
+                ["almacen", "Almacenado"],
+                ["estado", "Estado"],
+                ["verificador", "Verificado por"],
+                ["acciones", "Acción"],
+              ]}
+              rows={verifications}
+              renderCell={(key, row) => {
+                const v = row as QualityVerificationSummary;
+                if (key === "folio") return <span className="font-extrabold text-stone-950">{v.folio}</span>;
+                if (key === "fecha") return <span className="text-xs font-semibold">{formatDate(v.verification_date)}</span>;
+                if (key === "sucursal") return <span className="text-xs font-bold text-[#B45309]">{v.location_name}</span>;
+                if (key === "origen") return <span className="text-xs text-stone-600">{v.lot_folio ?? "Producción del día"}</span>;
+                if (key === "declarado") return <span className="font-bold">{formatNumber(v.total_declared)}</span>;
+                if (key === "pdv") return <span className="font-bold text-emerald-700">{formatNumber(v.total_point_of_sale)}</span>;
+                if (key === "almacen") return <span className={`font-bold ${Number(v.total_stored_elsewhere) > 0 ? "text-amber-700" : "text-stone-400"}`}>{formatNumber(v.total_stored_elsewhere)}</span>;
+                if (key === "estado") return <Badge status={v.has_discrepancies ? "con_diferencia" : "coincide"} />;
+                if (key === "verificador") return <span className="text-xs text-stone-500">{v.verified_by_name}</span>;
+                if (key === "acciones") {
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => void inspectVerification(v.verification_id)}
+                      disabled={inspectLoadingId === v.verification_id}
+                      className="rounded-lg border border-[#DDD7D1] bg-[#F5F1EE] px-3 py-1 text-xs font-bold text-stone-700 transition hover:bg-[#EDE8E3]"
+                    >
+                      {inspectLoadingId === v.verification_id ? "Cargando..." : "Ver Detalle"}
+                    </button>
+                  );
+                }
+                return null;
+              }}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Inspect Detail Modal */}
+      {inspectingVerification ? (
+        <Modal
+          title={`Detalle de Calidad: ${inspectingVerification.folio}`}
+          onClose={() => setInspectingVerification(null)}
+          maxWidthClass="max-w-3xl"
+        >
+          <div className="space-y-4">
+            <div className="grid gap-3 rounded-xl bg-[#FAFAF8] p-4 sm:grid-cols-3">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400">Sucursal</p>
+                <p className="text-sm font-extrabold text-stone-900">{inspectingVerification.location_name}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400">Fecha de Verificación</p>
+                <p className="text-sm font-extrabold text-stone-900">{formatDate(inspectingVerification.verification_date)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400">Verificado Por</p>
+                <p className="text-sm font-extrabold text-stone-900">{inspectingVerification.verified_by_name}</p>
+              </div>
+            </div>
+
+            {inspectingVerification.general_notes ? (
+              <div className="rounded-xl border border-stone-200 bg-white p-3.5 text-xs text-stone-700">
+                <span className="font-bold text-stone-900">Observación General: </span>
+                {inspectingVerification.general_notes}
+              </div>
+            ) : null}
+
+            <div className="divide-y divide-[#EDE8E3] rounded-xl border border-[#EDE8E3] bg-white">
+              {inspectingVerification.items.map((it) => {
+                const diff = Number(it.declared_quantity) - Number(it.point_of_sale_quantity);
+                const isMatched = diff === 0;
+                const unitLabel = it.unit || "pieza";
+
+                return (
+                  <div key={it.finished_product_id} className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <ProductThumb product={{ product: it.product_name, image_url: it.image_url }} size="sm" />
+                        <div>
+                          <p className="text-sm font-extrabold text-stone-950">{it.product_name}</p>
+                          <p className="text-xs text-stone-500">
+                            {[it.category, it.subcategory].filter(Boolean).join(" · ")}
+                            {it.packaging ? ` · ${it.packaging}` : ""}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <Badge status={isMatched ? "coincide" : "con_diferencia"} />
+                        <p className="mt-1 text-xs font-bold text-stone-700">
+                          PDV: <span className="text-emerald-700">{formatNumber(it.point_of_sale_quantity)} {unitLabel}</span> / Decl: {formatNumber(it.declared_quantity)} {unitLabel}
+                        </p>
+                      </div>
+                    </div>
+
+                    {!isMatched ? (
+                      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
+                        <div className="flex items-center gap-1 font-bold text-amber-900">
+                          <span>📦 Ubicación de Almacenamiento:</span>
+                          <span className="rounded bg-amber-200/80 px-1.5 py-0.5 text-amber-950">{it.storage_location ?? "No especificada"}</span>
+                          <span className="text-amber-700">({formatNumber(diff)} {unitLabel} resguardadas)</span>
+                        </div>
+                        {it.storage_notes ? (
+                          <p className="mt-1 text-stone-700">
+                            <span className="font-semibold">Nota:</span> {it.storage_notes}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <Button variant="secondary" onClick={() => setInspectingVerification(null)}>
+                Cerrar
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+    </div>
+  );
+}
+
+function MermaPvView({
+  supabase,
+  locations,
+  selectedLocation,
+  role,
+}: {
+  supabase: ReturnType<typeof createBrowserSupabaseClient>;
+  locations: LocationRow[];
+  selectedLocation: string;
+  role: UserRole | null;
+}) {
+  const [activeTab, setActiveTab] = useState<"declarar" | "historial">("declarar");
+  const [mermaDate, setMermaDate] = useState(formatTodayForFilename());
+  const [search, setSearch] = useState("");
+  const [selectedVerificationId, setSelectedVerificationId] = useState<string>("all");
+  const [qualityVerifications, setQualityVerifications] = useState<QualityVerificationSummary[]>([]);
+  const [items, setItems] = useState<MermaPvDraftItem[]>([]);
+  const [generalNotes, setGeneralNotes] = useState("");
+  const [mermaRecords, setMermaRecords] = useState<MermaPvSummary[]>([]);
+  const [inspectingRecord, setInspectingRecord] = useState<MermaPvDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [verifsLoading, setVerifsLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [inspectLoadingId, setInspectLoadingId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const selectedLocationId = selectedLocation === "Todas"
+    ? role?.role === "super_admin"
+      ? null
+      : locations.find((location) => normalize(location.name) === normalize(role?.sucursal ?? ""))?.id ?? null
+    : locations.find((location) => location.name === selectedLocation)?.id ?? null;
+
+  const targetLocationId = useMemo(() => {
+    if (selectedLocationId) return selectedLocationId;
+    if (selectedVerificationId !== "all") {
+      const v = qualityVerifications.find((item) => item.verification_id === selectedVerificationId);
+      if (v?.location_id) return v.location_id;
+    }
+    const uniqueLocs = Array.from(new Set(qualityVerifications.map((v) => v.location_id).filter(Boolean)));
+    if (uniqueLocs.length === 1) return uniqueLocs[0];
+    return locations.find((l) => l.name === "Teran")?.id ?? locations[0]?.id ?? null;
+  }, [selectedLocationId, selectedVerificationId, qualityVerifications, locations]);
+
+  const locationLabel = selectedLocation === "Todas" && role?.role !== "super_admin" ? role?.sucursal ?? "Mi sucursal" : selectedLocation;
+
+  const loadQualityVerifications = useCallback(async () => {
+    if (!supabase) return;
+    setVerifsLoading(true);
+    const { data, error: verifsErr } = await supabase.rpc("list_abastecimiento_quality_verifications", {
+      p_location_id: selectedLocationId,
+      p_date_from: mermaDate || null,
+      p_date_to: mermaDate || null,
+      p_limit: 50,
+    });
+    setVerifsLoading(false);
+    if (!verifsErr && data) {
+      setQualityVerifications((data as QualityVerificationSummary[] | null) ?? []);
+    } else {
+      setQualityVerifications([]);
+    }
+  }, [selectedLocationId, supabase, mermaDate]);
+
+  const loadProductsToMerma = useCallback(async () => {
+    if (!supabase) return;
+    setLoading(true);
+    setError(null);
+
+    const { data, error: prodErr } = await supabase.rpc("list_abastecimiento_quality_products_for_merma", {
+      p_location_id: selectedLocationId,
+      p_date: mermaDate || null,
+      p_verification_id: selectedVerificationId !== "all" ? selectedVerificationId : null,
+    });
+    setLoading(false);
+
+    if (prodErr) {
+      setError(prodErr.message);
+      setItems([]);
+      return;
+    }
+
+    type QualityMermaProduct = {
+      quality_item_id: string | null;
+      verification_id: string | null;
+      verification_folio: string | null;
+      finished_product_id: number;
+      product_name: string;
+      description: string | null;
+      packaging: string | null;
+      category: string | null;
+      subcategory: string | null;
+      image_url: string | null;
+      pdv_received_quantity: number;
+      unit: string;
+    };
+
+    const rawList = (data as QualityMermaProduct[] | null) ?? [];
+    const draftItems: MermaPvDraftItem[] = rawList.map((p) => ({
+      quality_item_id: p.quality_item_id,
+      verification_id: p.verification_id,
+      verification_folio: p.verification_folio,
+      finished_product_id: p.finished_product_id,
+      product_name: p.product_name,
+      description: p.description,
+      packaging: p.packaging,
+      category: p.category,
+      subcategory: p.subcategory,
+      image_url: p.image_url,
+      pdv_received_quantity: Number(p.pdv_received_quantity || 0),
+      merma_quantity: 0,
+      unit: p.unit || "pieza",
+      destination: "desecho",
+      recovery_action: RECOVERY_ACTIONS[0],
+      reason: MERMA_PV_REASONS[0],
+      notes: "",
+    }));
+    setItems(draftItems);
+  }, [selectedLocationId, selectedVerificationId, supabase, mermaDate]);
+
+  const loadMermaRecords = useCallback(async () => {
+    if (!supabase) return;
+    setHistoryLoading(true);
+    const { data, error: histErr } = await supabase.rpc("list_abastecimiento_merma_pv_records", {
+      p_location_id: selectedLocationId,
+      p_date_from: null,
+      p_date_to: null,
+      p_limit: 50,
+    });
+    setHistoryLoading(false);
+    if (histErr) {
+      setError(histErr.message);
+      setMermaRecords([]);
+      return;
+    }
+    setMermaRecords((data as MermaPvSummary[] | null) ?? []);
+  }, [selectedLocationId, supabase]);
+
+  useEffect(() => {
+    void loadQualityVerifications();
+    void loadProductsToMerma();
+    void loadMermaRecords();
+  }, [loadQualityVerifications, loadProductsToMerma, loadMermaRecords]);
+
+  const updateItemMermaQty = (finishedProductId: number, value: number) => {
+    setItems((current) =>
+      current.map((it) => {
+        if (it.finished_product_id !== finishedProductId) return it;
+        const maxQty = it.pdv_received_quantity;
+        const safeQty = Math.max(0, Math.min(maxQty, isNaN(value) ? 0 : value));
+        return { ...it, merma_quantity: safeQty };
+      })
+    );
+  };
+
+  const updateItemDestination = (finishedProductId: number, destination: MermaPvDestination) => {
+    setItems((current) =>
+      current.map((it) =>
+        it.finished_product_id === finishedProductId ? { ...it, destination } : it
+      )
+    );
+  };
+
+  const updateItemRecoveryAction = (finishedProductId: number, recovery_action: string) => {
+    setItems((current) =>
+      current.map((it) =>
+        it.finished_product_id === finishedProductId ? { ...it, recovery_action } : it
+      )
+    );
+  };
+
+  const updateItemReason = (finishedProductId: number, reason: string) => {
+    setItems((current) =>
+      current.map((it) =>
+        it.finished_product_id === finishedProductId ? { ...it, reason } : it
+      )
+    );
+  };
+
+  const updateItemNotes = (finishedProductId: number, notesText: string) => {
+    setItems((current) =>
+      current.map((it) =>
+        it.finished_product_id === finishedProductId ? { ...it, notes: notesText } : it
+      )
+    );
+  };
+
+  const setAllZeroMerma = () => {
+    setItems((current) =>
+      current.map((it) => ({
+        ...it,
+        merma_quantity: 0,
+        notes: "",
+      }))
+    );
+    setSuccessMessage("Se registró 0 merma: 100% vendido en todos los productos.");
+    const timer = setTimeout(() => setSuccessMessage(null), 4000);
+    return () => clearTimeout(timer);
+  };
+
+  const setAllTotalMerma = () => {
+    setItems((current) =>
+      current.map((it) => ({
+        ...it,
+        merma_quantity: it.pdv_received_quantity,
+      }))
+    );
+  };
+
+  const saveMermaRecord = async () => {
+    if (!supabase || saving) return;
+    if (!targetLocationId) {
+      setError("Selecciona una sucursal para guardar el registro de merma PV.");
+      return;
+    }
+    if (items.length === 0) {
+      setError("No hay productos verificados por Calidad en Punto de Venta para declarar merma.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setSuccessMessage(null);
+
+    const payload = {
+      p_location_id: targetLocationId,
+      p_merma_date: mermaDate || null,
+      p_verification_id: selectedVerificationId !== "all" ? selectedVerificationId : null,
+      p_notes: generalNotes.trim() || null,
+      p_items: items.map((it) => ({
+        finished_product_id: it.finished_product_id,
+        pdv_received_quantity: it.pdv_received_quantity,
+        merma_quantity: it.merma_quantity,
+        unit: it.unit || "pieza",
+        destination: it.destination || "desecho",
+        recovery_action: it.destination === "recuperacion" ? it.recovery_action || RECOVERY_ACTIONS[0] : null,
+        reason: it.reason || MERMA_PV_REASONS[0],
+        notes: it.notes.trim() || null,
+        quality_item_id: it.quality_item_id,
+      })),
+    };
+
+    const { data, error: saveErr } = await supabase.rpc(
+      "save_abastecimiento_merma_pv",
+      payload
+    );
+    setSaving(false);
+
+    if (saveErr) {
+      setError(saveErr.message);
+      return;
+    }
+
+    const res = data as {
+      folio?: string;
+      total_merma?: number;
+      total_desecho?: number;
+      total_recuperacion?: number;
+      merma_percentage?: number;
+    };
+    setSuccessMessage(
+      `✓ Registro de Merma PV ${res?.folio ?? ""} guardado con éxito (${formatNumber(
+        res?.total_merma ?? 0
+      )} unidades mermadas · 🗑️ ${formatNumber(res?.total_desecho ?? 0)} en Desecho / ♻️ ${formatNumber(
+        res?.total_recuperacion ?? 0
+      )} en Recuperación).`
+    );
+    setGeneralNotes("");
+    await Promise.all([loadMermaRecords(), loadProductsToMerma(), loadQualityVerifications()]);
+  };
+
+  const inspectRecord = async (mermaRecordId: string) => {
+    if (!supabase || inspectLoadingId) return;
+    setInspectLoadingId(mermaRecordId);
+    setError(null);
+    const { data, error: inspErr } = await supabase.rpc("get_abastecimiento_merma_pv_record", {
+      p_merma_record_id: mermaRecordId,
+    });
+    setInspectLoadingId(null);
+    if (inspErr) {
+      setError(inspErr.message);
+      return;
+    }
+    setInspectingRecord(data as MermaPvDetail);
+  };
+
+  const totalReceived = items.reduce((sum, it) => sum + Number(it.pdv_received_quantity || 0), 0);
+  const totalMerma = items.reduce((sum, it) => sum + Number(it.merma_quantity || 0), 0);
+  const totalSold = Math.max(0, totalReceived - totalMerma);
+  const totalDesecho = items.reduce(
+    (sum, it) => (it.destination === "desecho" ? sum + Number(it.merma_quantity || 0) : sum),
+    0
+  );
+  const totalRecuperacion = items.reduce(
+    (sum, it) => (it.destination === "recuperacion" ? sum + Number(it.merma_quantity || 0) : sum),
+    0
+  );
+  const mermaPercentage = totalReceived > 0 ? Math.round((totalMerma / totalReceived) * 100) : 0;
+  const soldPercentage = totalReceived > 0 ? Math.round((totalSold / totalReceived) * 100) : 100;
+  const itemsWithMermaCount = items.filter((it) => it.merma_quantity > 0).length;
+
+  // Historical aggregated metrics
+  const histTotalMerma = mermaRecords.reduce((sum, r) => sum + Number(r.total_merma || 0), 0);
+  const histTotalDesecho = mermaRecords.reduce((sum, r) => sum + Number(r.total_desecho || 0), 0);
+  const histTotalRecuperacion = mermaRecords.reduce((sum, r) => sum + Number(r.total_recuperacion || 0), 0);
+  const histRecoveryRate = histTotalMerma > 0 ? Math.round((histTotalRecuperacion / histTotalMerma) * 100) : 0;
+
+  const visibleItems = items.filter((it) =>
+    `${it.product_name} ${it.description ?? ""} ${it.packaging ?? ""} ${it.category ?? ""} ${it.subcategory ?? ""}`
+      .toLowerCase()
+      .includes(search.trim().toLowerCase())
+  );
+
+  return (
+    <div className="pb-24">
+      {/* Header */}
+      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <PageHeader
+          title="Control de Merma en Punto de Venta (PV)"
+          subtitle={`Declaración de producto no vendido a partir de recepción de calidad · ${locationLabel}`}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmented
+            value={activeTab}
+            onChange={(val) => {
+              setActiveTab(val as "declarar" | "historial");
+              setError(null);
+            }}
+            options={[
+              ["declarar", "Declaración de Merma"],
+              ["historial", `Historial (${mermaRecords.length})`],
+            ]}
+          />
+          <Button
+            variant="secondary"
+            disabled={loading || historyLoading}
+            onClick={() => {
+              void loadQualityVerifications();
+              void loadProductsToMerma();
+              void loadMermaRecords();
+            }}
+          >
+            {loading || historyLoading ? "Actualizando..." : "Actualizar"}
+          </Button>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard
+          label="% Merma en PDV"
+          value={`${mermaPercentage}%`}
+          sub={`${formatNumber(totalMerma)} de ${formatNumber(totalReceived)} unidades`}
+          accent={mermaPercentage === 0 && totalReceived > 0}
+          alert={mermaPercentage > 15}
+        />
+        <KpiCard
+          label="Vendido / Consumido"
+          value={formatNumber(totalSold)}
+          sub={`${soldPercentage}% del producto colocado`}
+          accent={totalSold > 0}
+        />
+        <KpiCard
+          label="🗑️ A Desecho (Basura)"
+          value={formatNumber(totalDesecho)}
+          sub="Pérdida total no recuperable"
+          alert={totalDesecho > 0}
+        />
+        <KpiCard
+          label="♻️ A Recuperación"
+          value={formatNumber(totalRecuperacion)}
+          sub="Pan molido, budín, donación..."
+          accent={totalRecuperacion > 0}
+        />
+      </div>
+
+      {error ? (
+        <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+          {error}
+        </p>
+      ) : null}
+
+      {successMessage ? (
+        <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800 shadow-sm">
+          <span>{successMessage}</span>
+          <button type="button" onClick={() => setSuccessMessage(null)} className="text-emerald-600 hover:text-emerald-950 font-bold">✕</button>
+        </div>
+      ) : null}
+
+      {activeTab === "declarar" ? (
+        <>
+          {/* Controls Bar */}
+          <div className="mt-5 grid gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 md:grid-cols-[180px_1fr_1fr_auto] md:items-end">
+            <Field label="Fecha de Verificación">
+              <input
+                value={mermaDate}
+                onChange={(event) => setMermaDate(event.target.value)}
+                type="date"
+                className="field-input"
+              />
+            </Field>
+
+            <Field label="Origen de Calidad">
+              <select
+                value={selectedVerificationId}
+                onChange={(event) => setSelectedVerificationId(event.target.value)}
+                className="field-input"
+              >
+                <option value="all">🛡️ Toda la recepción verificada en PDV del día</option>
+                {qualityVerifications.map((v) => (
+                  <option key={v.verification_id} value={v.verification_id}>
+                    {v.is_merma_declared ? "✓ [Declarada] " : "⏳ [Pendiente] "}
+                    {v.folio} · {v.location_name} ({formatNumber(v.total_point_of_sale)} unid. en PDV)
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="Buscar Producto">
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                className="field-input"
+                placeholder="Nombre, categoría, empaque..."
+              />
+            </Field>
+
+            <div className="mb-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={setAllZeroMerma}
+                disabled={items.length === 0}
+                className="h-10 rounded-lg border border-emerald-300 bg-emerald-50 px-3.5 text-xs font-bold text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-50"
+              >
+                ✓ 0 Merma (Vendido 100%)
+              </button>
+              <button
+                type="button"
+                onClick={setAllTotalMerma}
+                disabled={items.length === 0}
+                className="h-10 rounded-lg border border-stone-300 bg-stone-50 px-3 text-xs font-bold text-stone-700 transition hover:bg-stone-100 disabled:opacity-50"
+              >
+                Merma Total
+              </button>
+            </div>
+          </div>
+
+          {/* Products Merma Grid */}
+          {loading ? (
+            <div className="mt-6">
+              <EmptyState message="Cargando productos verificados en Punto de Venta..." />
+            </div>
+          ) : items.length === 0 ? (
+            qualityVerifications.length > 0 ? (
+              <div className="mt-6 rounded-2xl border border-dashed border-emerald-200 bg-[#F6FBF8] p-10 text-center">
+                <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-800">
+                  <Icon path="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </div>
+                <h3 className="text-base font-extrabold text-emerald-950">✓ Toda la merma en PDV ha sido declarada</h3>
+                <p className="mx-auto mt-1 max-w-md text-xs font-medium text-emerald-800/80">
+                  Todos los productos recibidos en Punto de Venta para {locationLabel} en la fecha {mermaDate} ya cuentan con su declaración de merma o venta registrada.
+                </p>
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("historial")}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-3.5 py-1.5 text-xs font-bold text-emerald-900 shadow-sm transition hover:bg-emerald-50"
+                  >
+                    Ver Historial de Declaraciones ({mermaRecords.length})
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-6 rounded-2xl border border-dashed border-[#DDD7D1] bg-[#FAFAF8] p-10 text-center">
+                <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
+                  <Icon path="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </div>
+                <h3 className="text-base font-extrabold text-stone-900">Sin recepción en PDV para esta fecha</h3>
+                <p className="mx-auto mt-1 max-w-md text-xs font-medium text-stone-500">
+                  No se encontraron recepciones de producto en Punto de Venta verificadas por Calidad para {locationLabel} en la fecha {mermaDate}.
+                  Verifica primero la recepción en la pestaña de Calidad para poder declarar su merma o venta.
+                </p>
+              </div>
+            )
+          ) : (
+            <div className="mt-5 grid gap-4 lg:grid-cols-2">
+              {visibleItems.map((item) => {
+                const soldQty = Math.max(0, item.pdv_received_quantity - item.merma_quantity);
+                const hasMerma = item.merma_quantity > 0;
+                const isTotalMerma = item.merma_quantity === item.pdv_received_quantity;
+                const unitLabel = item.unit || "pieza";
+                const isRecuperacion = item.destination === "recuperacion";
+
+                return (
+                  <div
+                    key={item.finished_product_id}
+                    className={`flex flex-col rounded-2xl border bg-white p-5 shadow-sm transition ${
+                      hasMerma
+                        ? isRecuperacion
+                          ? "border-emerald-300 ring-2 ring-emerald-500/20 bg-[#FBFCFB]"
+                          : "border-red-300 ring-2 ring-red-400/20 bg-[#FFFDFD]"
+                        : "border-[#EDE8E3] hover:border-[#D6C9BF] hover:shadow-md"
+                    }`}
+                  >
+                    {/* Header: Fixed thumbnail + product name + received in PDV badge */}
+                    <div className="flex items-start gap-4">
+                      {item.image_url ? (
+                        <div
+                          aria-label={`Imagen de ${item.product_name}`}
+                          role="img"
+                          className="h-16 w-16 sm:h-20 sm:w-20 shrink-0 rounded-xl border border-[#EDE8E3] bg-[#F5F1EE] bg-cover bg-center shadow-inner"
+                          style={{ backgroundImage: `url(${item.image_url})` }}
+                        />
+                      ) : (
+                        <div className="flex h-16 w-16 sm:h-20 sm:w-20 shrink-0 items-center justify-center rounded-xl border border-[#EDE8E3] bg-[#F5F1EE] text-sm font-black text-[#B45309]">
+                          {getInitials(item.product_name)}
+                        </div>
+                      )}
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                          <div className="min-w-0">
+                            <h4 className="text-base font-extrabold text-stone-950 leading-snug">
+                              {item.product_name}
+                            </h4>
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              <span className="inline-flex items-center rounded-md bg-[#F5F1EE] px-2 py-0.5 text-xs font-semibold text-stone-600">
+                                {[item.category, item.subcategory].filter(Boolean).join(" · ") || "Producto terminado"}
+                              </span>
+                              {item.packaging ? (
+                                <span className="inline-flex items-center rounded-md bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-500">
+                                  {item.packaging}
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          <div className="shrink-0 self-start">
+                            <span className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-extrabold text-white shadow-sm">
+                              <span>Entró a PDV:</span>
+                              <span className="text-amber-400 font-black">{formatNumber(item.pdv_received_quantity)}</span>
+                              <span className="text-stone-300 font-medium">{unitLabel}</span>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Interactive Merma Stepper & Sold Pill */}
+                    <div className="mt-4 rounded-xl bg-[#FAFAF8] p-3.5 border border-[#EDE8E3]/80">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div>
+                          <span className="block text-[10px] font-extrabold uppercase tracking-wider text-stone-500 mb-1">
+                            Cantidad de Merma (No vendido)
+                          </span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => updateItemMermaQty(item.finished_product_id, item.merma_quantity - 1)}
+                                className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#DDD7D1] bg-white text-base font-black text-stone-700 shadow-sm transition hover:bg-stone-100 active:scale-95"
+                              >
+                                −
+                              </button>
+                              <input
+                                type="number"
+                                min={0}
+                                max={item.pdv_received_quantity}
+                                step="any"
+                                value={item.merma_quantity}
+                                onChange={(e) => updateItemMermaQty(item.finished_product_id, Number(e.target.value))}
+                                className="h-9 w-20 rounded-lg border border-[#DDD7D1] bg-white text-center text-base font-black text-stone-950 shadow-inner focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/20"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => updateItemMermaQty(item.finished_product_id, item.merma_quantity + 1)}
+                                className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#DDD7D1] bg-white text-base font-black text-stone-700 shadow-sm transition hover:bg-stone-100 active:scale-95"
+                              >
+                                +
+                              </button>
+                            </div>
+                            <span className="text-xs font-bold text-stone-600">
+                              {unitLabel}
+                            </span>
+
+                            <div className="flex gap-1 ml-1">
+                              <button
+                                type="button"
+                                onClick={() => updateItemMermaQty(item.finished_product_id, 0)}
+                                className="rounded-md border border-stone-200 bg-white px-2 py-1 text-[11px] font-bold text-stone-600 hover:bg-stone-100"
+                              >
+                                0
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => updateItemMermaQty(item.finished_product_id, item.pdv_received_quantity)}
+                                className="rounded-md border border-stone-200 bg-white px-2 py-1 text-[11px] font-bold text-stone-600 hover:bg-stone-100"
+                              >
+                                Todo
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="sm:text-right">
+                          <span className="block text-[10px] font-extrabold uppercase tracking-wider text-stone-500 mb-1">
+                            Resultado en PDV
+                          </span>
+                          <div className="flex flex-wrap items-center sm:justify-end gap-2">
+                            <span className="inline-flex items-center rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-800">
+                              Vendido: {formatNumber(soldQty)} {unitLabel}
+                            </span>
+                            {!hasMerma ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-100 px-3 py-1 text-xs font-extrabold text-emerald-800 whitespace-nowrap">
+                                ✓ 100% Vendido
+                              </span>
+                            ) : isTotalMerma ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-red-300 bg-red-100 px-3 py-1 text-xs font-extrabold text-red-900 whitespace-nowrap">
+                                ⛔ 100% Merma
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-3 py-1 text-xs font-extrabold text-amber-900 whitespace-nowrap">
+                                ⚠ Merma ({formatNumber(item.merma_quantity)} {unitLabel})
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Destination (Desecho / Recuperación), Reason & Notes */}
+                    {hasMerma ? (
+                      <div
+                        className={`mt-3.5 rounded-xl border p-4 shadow-sm transition ${
+                          isRecuperacion
+                            ? "border-emerald-300 bg-emerald-50/70"
+                            : "border-red-300 bg-red-50/80"
+                        }`}
+                      >
+                        {/* Destination selector pills */}
+                        <div className="mb-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <label className="block text-[11px] font-extrabold uppercase tracking-wider text-stone-800">
+                              ¿A dónde se va la merma? ({formatNumber(item.merma_quantity)} {unitLabel})
+                            </label>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => updateItemDestination(item.finished_product_id, "desecho")}
+                              className={`flex flex-col items-center justify-center rounded-xl border p-2.5 text-center transition ${
+                                !isRecuperacion
+                                  ? "border-red-600 bg-red-600 text-white font-black shadow-sm"
+                                  : "border-stone-300 bg-white text-stone-700 font-bold hover:bg-stone-50"
+                              }`}
+                            >
+                              <span className="text-sm">🗑️ Desecho / Basura</span>
+                              <span className={`text-[10px] ${!isRecuperacion ? "text-red-100 font-medium" : "text-stone-400 font-normal"}`}>
+                                Pérdida total no reutilizable
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => updateItemDestination(item.finished_product_id, "recuperacion")}
+                              className={`flex flex-col items-center justify-center rounded-xl border p-2.5 text-center transition ${
+                                isRecuperacion
+                                  ? "border-emerald-700 bg-emerald-700 text-white font-black shadow-sm"
+                                  : "border-stone-300 bg-white text-stone-700 font-bold hover:bg-stone-50"
+                              }`}
+                            >
+                              <span className="text-sm">♻️ Recuperación</span>
+                              <span className={`text-[10px] ${isRecuperacion ? "text-emerald-100 font-medium" : "text-stone-400 font-normal"}`}>
+                                Reproceso, pan molido, donación
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Reason, Recovery Action & Observation Inputs */}
+                        <div className="grid gap-3 sm:grid-cols-2 sm:items-end">
+                          {isRecuperacion ? (
+                            <div>
+                              <label className="mb-1 block text-[10px] font-extrabold uppercase tracking-wider text-emerald-900">
+                                Acción de Recuperación
+                              </label>
+                              <select
+                                value={item.recovery_action}
+                                onChange={(e) => updateItemRecoveryAction(item.finished_product_id, e.target.value)}
+                                className="field-input h-10 text-xs font-bold bg-white border-emerald-300 text-stone-900"
+                              >
+                                {RECOVERY_ACTIONS.map((act) => (
+                                  <option key={act} value={act}>
+                                    {act}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ) : null}
+
+                          <div className={!isRecuperacion ? "sm:col-span-1" : ""}>
+                            <label
+                              className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${
+                                isRecuperacion ? "text-emerald-900" : "text-red-900"
+                              }`}
+                            >
+                              Motivo / Razón
+                            </label>
+                            <select
+                              value={item.reason}
+                              onChange={(e) => updateItemReason(item.finished_product_id, e.target.value)}
+                              className={`field-input h-10 text-xs font-bold bg-white text-stone-900 ${
+                                isRecuperacion ? "border-emerald-300" : "border-red-300"
+                              }`}
+                            >
+                              {MERMA_PV_REASONS.map((r) => (
+                                <option key={r} value={r}>
+                                  {r}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className={isRecuperacion ? "sm:col-span-2" : "sm:col-span-1"}>
+                            <label
+                              className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${
+                                isRecuperacion ? "text-emerald-900" : "text-red-900"
+                              }`}
+                            >
+                              Observaciones Adicionales
+                            </label>
+                            <input
+                              type="text"
+                              value={item.notes}
+                              onChange={(e) => updateItemNotes(item.finished_product_id, e.target.value)}
+                              placeholder={`Ej. Sobrantes al cierre de turno, empaque deteriorado...`}
+                              className={`field-input h-10 text-xs bg-white ${
+                                isRecuperacion ? "border-emerald-300 focus:border-emerald-500" : "border-red-300 focus:border-red-500"
+                              }`}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Bottom Save Bar */}
+          {items.length > 0 ? (
+            <div className="mt-8 rounded-2xl border border-[#EDE8E3] bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="flex-1">
+                  <label className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.05em] text-stone-500">
+                    Observaciones Generales de la Merma PV (Opcional)
+                  </label>
+                  <input
+                    value={generalNotes}
+                    onChange={(e) => setGeneralNotes(e.target.value)}
+                    placeholder="Turno vespertino/cierre, condiciones climatológicas, afluencia..."
+                    className="field-input h-10 text-sm"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="rounded-xl bg-[#F5F1EE] px-4 py-2 text-right">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Resumen</p>
+                    <p className="text-sm font-extrabold text-stone-950">
+                      PDV: <span className="text-[#B45309]">{formatNumber(totalReceived)}</span> · Vendido: <span className="text-emerald-700">{formatNumber(totalSold)}</span> · 🗑️ Desecho: <span className="text-red-700">{formatNumber(totalDesecho)}</span> · ♻️ Recup: <span className="text-emerald-700">{formatNumber(totalRecuperacion)}</span>
+                    </p>
+                  </div>
+
+                  <Button
+                    disabled={saving || items.length === 0 || !targetLocationId}
+                    onClick={() => void saveMermaRecord()}
+                  >
+                    {saving ? "Guardando..." : "Guardar Merma PV"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        /* Historial Tab */
+        <div className="mt-5 space-y-5">
+          {/* Historical Summary Cards */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-2xl border border-[#EDE8E3] bg-white p-4 shadow-sm">
+              <p className="text-xs font-bold uppercase tracking-wider text-stone-500">Total Merma Histórica</p>
+              <p className="mt-1 text-2xl font-black text-stone-950">{formatNumber(histTotalMerma)}</p>
+              <p className="mt-0.5 text-xs text-stone-500">{mermaRecords.length} registros auditados</p>
+            </div>
+
+            <div className="rounded-2xl border border-red-200 bg-red-50/50 p-4 shadow-sm">
+              <p className="text-xs font-bold uppercase tracking-wider text-red-800">🗑️ Total a Desecho</p>
+              <p className="mt-1 text-2xl font-black text-red-900">{formatNumber(histTotalDesecho)}</p>
+              <p className="mt-0.5 text-xs text-red-700 font-semibold">Pérdida neta acumulada</p>
+            </div>
+
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 shadow-sm">
+              <p className="text-xs font-bold uppercase tracking-wider text-emerald-800">♻️ Total en Recuperación</p>
+              <p className="mt-1 text-2xl font-black text-emerald-900">{formatNumber(histTotalRecuperacion)}</p>
+              <p className="mt-0.5 text-xs text-emerald-700 font-semibold">Reprocesado / Reutilizado</p>
+            </div>
+
+            <div className="rounded-2xl border border-[#EDE8E3] bg-white p-4 shadow-sm">
+              <p className="text-xs font-bold uppercase tracking-wider text-stone-500">Tasa de Recuperación</p>
+              <p className="mt-1 text-2xl font-black text-[#B45309]">{histRecoveryRate}%</p>
+              <p className="mt-0.5 text-xs text-stone-500">Del total mermado histórico</p>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[#EDE8E3] bg-white p-5 shadow-sm">
+            <SectionHeader
+              title="Historial de Declaraciones de Merma en Punto de Venta"
+              actionLabel="Actualizar"
+              onAction={() => void loadMermaRecords()}
+            />
+
+            {historyLoading ? (
+              <EmptyState message="Cargando historial de merma PV..." />
+            ) : mermaRecords.length === 0 ? (
+              <EmptyState message="No hay declaraciones de merma PV registradas para esta sucursal." />
+            ) : (
+              <DataTable
+                columns={[
+                  ["folio", "Folio"],
+                  ["fecha", "Fecha"],
+                  ["sucursal", "Sucursal"],
+                  ["origen", "Verif. Calidad"],
+                  ["recibido", "Entró a PDV"],
+                  ["vendido", "Vendido"],
+                  ["desecho", "🗑️ Desecho"],
+                  ["recuperacion", "♻️ Recuperación"],
+                  ["merma", "Total Merma"],
+                  ["porcentaje", "% Merma"],
+                  ["registrador", "Registrado por"],
+                  ["acciones", "Acción"],
+                ]}
+                rows={mermaRecords}
+                renderCell={(key, row) => {
+                  const r = row as MermaPvSummary;
+                  const pct = Number(r.merma_percentage || 0);
+                  if (key === "folio") return <span className="font-extrabold text-stone-950">{r.folio}</span>;
+                  if (key === "fecha") return <span className="text-xs font-semibold">{formatDate(r.merma_date)}</span>;
+                  if (key === "sucursal") return <span className="text-xs font-bold text-[#B45309]">{r.location_name}</span>;
+                  if (key === "origen") return <span className="text-xs text-stone-600">{r.verification_folio ?? "Recepción del día"}</span>;
+                  if (key === "recibido") return <span className="font-bold">{formatNumber(r.total_received_pdv)}</span>;
+                  if (key === "vendido") return <span className="font-bold text-emerald-700">{formatNumber(r.total_sold)}</span>;
+                  if (key === "desecho") return <span className={`font-bold ${Number(r.total_desecho) > 0 ? "text-red-700" : "text-stone-400"}`}>{formatNumber(r.total_desecho ?? 0)}</span>;
+                  if (key === "recuperacion") return <span className={`font-bold ${Number(r.total_recuperacion) > 0 ? "text-emerald-700 font-extrabold" : "text-stone-400"}`}>{formatNumber(r.total_recuperacion ?? 0)}</span>;
+                  if (key === "merma") return <span className={`font-bold ${Number(r.total_merma) > 0 ? "text-red-700" : "text-stone-400"}`}>{formatNumber(r.total_merma)}</span>;
+                  if (key === "porcentaje") {
+                    const statusKey = pct === 0 ? "sin_merma" : pct < 20 ? "merma_parcial" : "merma_alta";
+                    return <Badge status={statusKey} />;
+                  }
+                  if (key === "registrador") return <span className="text-xs text-stone-500">{r.registered_by_name}</span>;
+                  if (key === "acciones") {
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => void inspectRecord(r.merma_record_id)}
+                        disabled={inspectLoadingId === r.merma_record_id}
+                        className="rounded-lg border border-[#DDD7D1] bg-[#F5F1EE] px-3 py-1 text-xs font-bold text-stone-700 transition hover:bg-[#EDE8E3]"
+                      >
+                        {inspectLoadingId === r.merma_record_id ? "Cargando..." : "Ver Detalle"}
+                      </button>
+                    );
+                  }
+                  return null;
+                }}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Inspect Detail Modal */}
+      {inspectingRecord ? (
+        <Modal
+          title={`Detalle de Merma PV: ${inspectingRecord.folio}`}
+          onClose={() => setInspectingRecord(null)}
+          maxWidthClass="max-w-3xl"
+        >
+          <div className="space-y-4">
+            <div className="grid gap-3 rounded-xl bg-[#FAFAF8] p-4 sm:grid-cols-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400">Sucursal</p>
+                <p className="text-sm font-extrabold text-stone-900">{inspectingRecord.location_name}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400">Fecha</p>
+                <p className="text-sm font-extrabold text-stone-900">{formatDate(inspectingRecord.merma_date)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400">Registrado Por</p>
+                <p className="text-sm font-extrabold text-stone-900">{inspectingRecord.registered_by_name}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400">% Merma Global</p>
+                <p className={`text-sm font-extrabold ${Number(inspectingRecord.merma_percentage) > 0 ? "text-red-700" : "text-emerald-700"}`}>
+                  {inspectingRecord.merma_percentage}%
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Metrics */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="rounded-xl border border-stone-200 bg-white p-3 text-center">
+                <p className="text-[10px] font-bold uppercase text-stone-400">Entró a PDV</p>
+                <p className="text-lg font-black text-stone-900">{formatNumber(inspectingRecord.total_received_pdv)}</p>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3 text-center">
+                <p className="text-[10px] font-bold uppercase text-emerald-800">Vendido</p>
+                <p className="text-lg font-black text-emerald-900">{formatNumber(inspectingRecord.total_sold)}</p>
+              </div>
+              <div className="rounded-xl border border-red-200 bg-red-50/50 p-3 text-center">
+                <p className="text-[10px] font-bold uppercase text-red-800">🗑️ Desecho</p>
+                <p className="text-lg font-black text-red-900">{formatNumber(inspectingRecord.total_desecho ?? 0)}</p>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3 text-center">
+                <p className="text-[10px] font-bold uppercase text-emerald-800">♻️ Recuperación</p>
+                <p className="text-lg font-black text-emerald-900">{formatNumber(inspectingRecord.total_recuperacion ?? 0)}</p>
+              </div>
+            </div>
+
+            {inspectingRecord.general_notes ? (
+              <div className="rounded-xl border border-stone-200 bg-white p-3.5 text-xs text-stone-700">
+                <span className="font-bold text-stone-900">Observación General: </span>
+                {inspectingRecord.general_notes}
+              </div>
+            ) : null}
+
+            <div className="divide-y divide-[#EDE8E3] rounded-xl border border-[#EDE8E3] bg-white">
+              {inspectingRecord.items.map((it) => {
+                const hasMerma = Number(it.merma_quantity) > 0;
+                const unitLabel = it.unit || "pieza";
+                const isRecup = it.destination === "recuperacion";
+
+                return (
+                  <div key={it.finished_product_id} className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <ProductThumb product={{ product: it.product_name, image_url: it.image_url }} size="sm" />
+                        <div>
+                          <p className="text-sm font-extrabold text-stone-950">{it.product_name}</p>
+                          <p className="text-xs text-stone-500">
+                            {[it.category, it.subcategory].filter(Boolean).join(" · ")}
+                            {it.packaging ? ` · ${it.packaging}` : ""}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <p className="text-xs font-bold text-stone-700">
+                          PDV: {formatNumber(it.pdv_received_quantity)} {unitLabel} · Vendido: <span className="text-emerald-700 font-extrabold">{formatNumber(it.sold_quantity)}</span>
+                        </p>
+                        <p className={`mt-0.5 text-xs font-bold ${hasMerma ? "text-red-700" : "text-stone-400"}`}>
+                          Merma: {formatNumber(it.merma_quantity)} {unitLabel}
+                        </p>
+                      </div>
+                    </div>
+
+                    {hasMerma ? (
+                      <div
+                        className={`mt-3 rounded-lg border p-3 text-xs ${
+                          isRecup ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center gap-2 font-bold">
+                          <span className={isRecup ? "text-emerald-900" : "text-red-900"}>📦 Destino:</span>
+                          <span
+                            className={`rounded px-2 py-0.5 text-xs font-extrabold ${
+                              isRecup ? "bg-emerald-200 text-emerald-950" : "bg-red-200 text-red-950"
+                            }`}
+                          >
+                            {isRecup ? `♻️ Recuperación (${it.recovery_action || "Reproceso"})` : "🗑️ Desecho (Basura)"}
+                          </span>
+                          <span className="text-stone-500">· Motivo: {it.reason}</span>
+                        </div>
+                        {it.notes ? (
+                          <p className="mt-1.5 text-stone-700">
+                            <span className="font-semibold">Detalle:</span> {it.notes}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <Button variant="secondary" onClick={() => setInspectingRecord(null)}>
+                Cerrar
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
     </div>
   );
 }
