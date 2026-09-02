@@ -276,6 +276,8 @@ begin
     raise exception 'Agrega al menos un producto con cantidad mayor a cero.' using errcode = '22023';
   end if;
 
+  perform abastecimiento.process_lot_recipe_consumption(v_lot_id);
+
   return jsonb_build_object(
     'lot_id', v_lot_id,
     'folio', v_folio,
@@ -507,6 +509,8 @@ begin
     notes = nullif(trim(coalesce(p_notes, '')), ''),
     updated_at = now()
   where id = p_lot_id;
+
+  perform abastecimiento.process_lot_recipe_consumption(p_lot_id);
 
   return jsonb_build_object(
     'lot_id', p_lot_id,

@@ -271,6 +271,13 @@ type InventoryStoredRow = {
   category_name: string | null;
   delicate_management: boolean;
   product_note: string | null;
+  base_unit: "g" | "ml" | "pieza" | null;
+  received_base_quantity: number | string | null;
+  consumed_base_quantity: number | string | null;
+  available_base_quantity: number | string | null;
+  base_unit_cost: number | string | null;
+  available_value: number | string | null;
+  normalization_source: "deterministic" | "minimax" | "manual" | null;
 };
 
 type InventoryReportFilters = {
@@ -279,9 +286,22 @@ type InventoryReportFilters = {
   dateTo: string;
   locationLabel: string;
   rackLabel: string;
-  totalQuantity: number;
+  totalGrams: number;
+  totalMilliliters: number;
+  totalPieces: number;
   totalValue: number;
   warehouseLabel: string;
+};
+
+type MinimaxInventoryStatus = {
+  model: "MiniMax-M3";
+  configured: boolean;
+  total_count: number;
+  normalized_count: number;
+  pending_count: number;
+  recipe_output_total_count: number;
+  recipe_output_normalized_count: number;
+  recipe_output_pending_count: number;
 };
 
 type ProductionStockProduct = {
@@ -349,6 +369,65 @@ type ProductionLotDetail = {
   notes: string | null;
   created_at: string;
   items: ProductionLotDetailItem[];
+};
+
+type LotConsumptionSummary = {
+  lot_id: string;
+  folio: string;
+  location_id: string;
+  location_name: string;
+  production_date: string;
+  notes: string | null;
+  created_at: string;
+  total_products_count: number;
+  total_produced_pieces: number;
+  total_ingredients_count: number;
+  total_ingredient_cost: number;
+  products_summary: string;
+  top_ingredients_summary: string;
+};
+
+type LotConsumptionIngredientDetail = {
+  id: string;
+  ingredient_id: string | null;
+  ingredient_name: string;
+  quantity_consumed: number;
+  unit: string;
+  unit_cost: number;
+  total_cost: number;
+  is_subrecipe: boolean;
+  subrecipe_id: string | null;
+  subrecipe_name: string | null;
+};
+
+type LotConsumptionProductDetail = {
+  lot_item_id: string;
+  finished_product_id: number;
+  product_name: string;
+  quantity: number;
+  unit: string;
+  has_recipe: boolean;
+  recipe_name: string | null;
+  recipe_yield_pieces: number | null;
+  recipe_portions: number | null;
+  ingredients: LotConsumptionIngredientDetail[];
+};
+
+type LotConsumptionDetail = {
+  lot_id: string;
+  folio: string;
+  location_id: string;
+  location_name: string;
+  production_date: string;
+  notes: string | null;
+  created_at: string;
+  products: LotConsumptionProductDetail[];
+  totals: {
+    total_ingredients_count: number;
+    total_cost: number;
+    total_direct_ingredients: number;
+    total_subrecipe_ingredients: number;
+  };
 };
 
 type QualityVerificationSummary = {
@@ -478,6 +557,9 @@ type MermaPvSummary = {
   total_sold: number | string;
   total_desecho: number | string;
   total_recuperacion: number | string;
+  total_desecho_value?: number | string;
+  total_recuperacion_value?: number | string;
+  total_merma_value?: number | string;
   merma_percentage: number | string;
   general_notes: string | null;
   registered_by_name: string;
@@ -495,6 +577,8 @@ type MermaPvItemDetail = {
   category: string | null;
   subcategory: string | null;
   image_url: string | null;
+  unit_price?: number;
+  total_price?: number;
   pdv_received_quantity: number;
   merma_quantity: number;
   sold_quantity: number;
@@ -518,6 +602,9 @@ type MermaPvDetail = {
   total_sold: number;
   total_desecho: number;
   total_recuperacion: number;
+  total_desecho_value?: number;
+  total_recuperacion_value?: number;
+  total_merma_value?: number;
   merma_percentage: number;
   general_notes: string | null;
   registered_by_name: string;
@@ -536,6 +623,7 @@ type MermaPvDraftItem = {
   category: string | null;
   subcategory: string | null;
   image_url: string | null;
+  unit_price: number;
   pdv_received_quantity: number;
   merma_quantity: number;
   unit: string;
@@ -2191,7 +2279,11 @@ function renderInventoryReportSummary(doc: jsPDF, filters: InventoryReportFilter
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.setTextColor(...PDF_PALETTE.muted);
-  doc.text(`Cantidad recibida: ${formatNumber(filters.totalQuantity)} · Valor estimado: ${formatCurrency(filters.totalValue)}`, PDF_LAYOUT.margin, cursorY + 8);
+  doc.text(
+    `Disponible: ${formatNumber(filters.totalGrams)} g · ${formatNumber(filters.totalMilliliters)} ml · ${formatNumber(filters.totalPieces)} pzas · ${formatCurrency(filters.totalValue)}`,
+    PDF_LAYOUT.margin,
+    cursorY + 8,
+  );
   return cursorY + 18;
 }
 
@@ -2355,9 +2447,17 @@ function renderInventoryReportRow(doc: jsPDF, row: InventoryStoredRow, index: nu
   drawPdfCellText(doc, String(index), columns, "index", cursorY, rowHeight, "center");
   drawPdfCellText(doc, productLines, columns, "product", cursorY, rowHeight);
   drawPdfCellText(doc, destinationLines, columns, "destination", cursorY, rowHeight);
-  drawPdfCellText(doc, formatNumber(row.received_quantity), columns, "quantity", cursorY, rowHeight, "right");
+  drawPdfCellText(
+    doc,
+    row.base_unit ? `${formatNumber(row.available_base_quantity)} ${row.base_unit}` : "Pendiente",
+    columns,
+    "quantity",
+    cursorY,
+    rowHeight,
+    "right",
+  );
   drawPdfCellText(doc, trackingLines, columns, "tracking", cursorY, rowHeight);
-  drawPdfCellText(doc, formatCurrency(row.total_cost), columns, "value", cursorY, rowHeight, "right");
+  drawPdfCellText(doc, formatCurrency(row.available_value), columns, "value", cursorY, rowHeight, "right");
 
   return cursorY + rowHeight;
 }
@@ -2625,7 +2725,7 @@ function getInventoryReportColumns(): PdfColumn[] {
     { key: "index", label: "#", x: 0, width: 20, align: "center" },
     { key: "product", label: "Producto", x: 24, width: 170, align: "left" },
     { key: "destination", label: "Almacen / Rack", x: 198, width: 138, align: "left" },
-    { key: "quantity", label: "Cantidad", x: 340, width: 50, align: "right" },
+    { key: "quantity", label: "Disponible", x: 340, width: 50, align: "right" },
     { key: "tracking", label: "Lote / Cad.", x: 394, width: 78, align: "left" },
     { key: "value", label: "Valor", x: 476, width: 60, align: "right" },
   ];
@@ -2846,6 +2946,8 @@ function InventoryView({
   selectedLocation: string;
   role: UserRole | null;
 }) {
+  const [activeTab, setActiveTab] = useState<"almacen" | "consumos">("almacen");
+  const [searchQuery, setSearchQuery] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [warehouseFilter, setWarehouseFilter] = useState("todos");
@@ -2856,12 +2958,20 @@ function InventoryView({
   const [reportLoading, setReportLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Consumptions state
+  const [consumptionLots, setConsumptionLots] = useState<LotConsumptionSummary[]>([]);
+  const [consumptionLoading, setConsumptionLoading] = useState(false);
+  const [consumptionSearch, setConsumptionSearch] = useState("");
+  const [inspectingLotId, setInspectingLotId] = useState<string | null>(null);
+  const [lotDetail, setLotDetail] = useState<LotConsumptionDetail | null>(null);
+  const [lotDetailLoading, setLotDetailLoading] = useState(false);
+
   const loadRows = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
     setError(null);
     const { data, error: loadError } = await supabase.rpc("list_abastecimiento_inventory_items", {
-      p_date_from: dateFrom || null,
+      p_date_from: null,
       p_date_to: dateTo || null,
     });
     setLoading(false);
@@ -2879,14 +2989,59 @@ function InventoryView({
       );
     }
     setRows(fetchedRows);
+  }, [dateTo, role, supabase]);
+
+  const loadConsumptions = useCallback(async () => {
+    if (!supabase) return;
+    setConsumptionLoading(true);
+    setError(null);
+    const { data, error: consError } = await supabase.rpc("list_abastecimiento_production_lot_consumptions", {
+      p_date_from: dateFrom || null,
+      p_date_to: dateTo || null,
+    });
+    setConsumptionLoading(false);
+
+    if (consError) {
+      setError(consError.message);
+      setConsumptionLots([]);
+      return;
+    }
+
+    let fetchedLots = (data as LotConsumptionSummary[] | null) ?? [];
+    if (role && role.role !== "super_admin") {
+      fetchedLots = fetchedLots.filter(
+        (lot) => normalize(lot.location_name) === normalize(role.sucursal ?? "")
+      );
+    }
+    setConsumptionLots(fetchedLots);
   }, [dateFrom, dateTo, role, supabase]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       void loadRows();
+      void loadConsumptions();
     }, 0);
     return () => window.clearTimeout(timeoutId);
-  }, [loadRows]);
+  }, [loadRows, loadConsumptions]);
+
+  const inspectLotConsumption = async (lotId: string) => {
+    if (!supabase || lotDetailLoading) return;
+    setInspectingLotId(lotId);
+    setLotDetailLoading(true);
+    setError(null);
+    const { data, error: detailErr } = await supabase.rpc(
+      "get_abastecimiento_production_lot_consumption_detail",
+      { p_lot_id: lotId }
+    );
+    setLotDetailLoading(false);
+
+    if (detailErr) {
+      setError(detailErr.message);
+      return;
+    }
+
+    setLotDetail(data as LotConsumptionDetail);
+  };
 
   const scopedRows = filterByLocation(rows, selectedLocation);
   const warehouseScopedRows = scopedRows.filter((row) => warehouseFilter === "todos" || (row.warehouse_id ?? "sin_almacen") === warehouseFilter);
@@ -2911,11 +3066,40 @@ function InventoryView({
     const matchesWarehouse = warehouseFilter === "todos" || (row.warehouse_id ?? "sin_almacen") === warehouseFilter;
     const matchesRack = rackFilter === "todos" || (row.rack_id ?? "sin_rack") === rackFilter;
     const matchesCategory = categoryFilter === "todos" || (row.category_id ?? "sin_categoria") === categoryFilter;
-    return matchesWarehouse && matchesRack && matchesCategory;
+    const matchesSearch = !searchQuery.trim() || [
+      row.product,
+      row.brand,
+      row.presentation,
+      row.receipt_folio,
+      row.lot_code,
+      row.category_name,
+      row.warehouse_name,
+      row.almacen
+    ].some((val) => val && val.toLowerCase().includes(searchQuery.toLowerCase().trim()));
+
+    return matchesWarehouse && matchesRack && matchesCategory && matchesSearch;
   });
-  const totalQuantity = visible.reduce((sum, row) => sum + Number(row.received_quantity ?? 0), 0);
-  const totalValue = visible.reduce((sum, row) => sum + Number(row.total_cost ?? 0), 0);
-  const specialCare = visible.filter((row) => row.delicate_management).length;
+  const totalGrams = visible.reduce((sum, row) => sum + (row.base_unit === "g" ? Number(row.available_base_quantity ?? 0) : 0), 0);
+  const totalMilliliters = visible.reduce((sum, row) => sum + (row.base_unit === "ml" ? Number(row.available_base_quantity ?? 0) : 0), 0);
+  const totalPieces = visible.reduce((sum, row) => sum + (row.base_unit === "pieza" ? Number(row.available_base_quantity ?? 0) : 0), 0);
+  const totalValue = visible.reduce((sum, row) => sum + Number(row.available_value ?? 0), 0);
+
+  // Consumptions filtered
+  const scopedConsumptionLots = filterByLocation(consumptionLots, selectedLocation);
+  const visibleConsumptionLots = scopedConsumptionLots.filter((lot) => {
+    if (!consumptionSearch.trim()) return true;
+    const q = consumptionSearch.toLowerCase();
+    return (
+      lot.folio.toLowerCase().includes(q) ||
+      lot.location_name.toLowerCase().includes(q) ||
+      (lot.products_summary ?? "").toLowerCase().includes(q) ||
+      (lot.top_ingredients_summary ?? "").toLowerCase().includes(q) ||
+      (lot.notes ?? "").toLowerCase().includes(q)
+    );
+  });
+  const totalConsumptionPieces = visibleConsumptionLots.reduce((sum, lot) => sum + Number(lot.total_produced_pieces ?? 0), 0);
+  const totalConsumptionIngredients = visibleConsumptionLots.reduce((sum, lot) => sum + Number(lot.total_ingredients_count ?? 0), 0);
+  const totalConsumptionCost = visibleConsumptionLots.reduce((sum, lot) => sum + Number(lot.total_ingredient_cost ?? 0), 0);
 
   function generateInventoryReport() {
     if (visible.length === 0) return;
@@ -2924,11 +3108,13 @@ function InventoryView({
     try {
       downloadInventoryReportPdf(visible, {
         categoryLabel: getOptionLabel(categoryOptions, categoryFilter, "Todas"),
-        dateFrom,
+        dateFrom: "",
         dateTo,
         locationLabel: selectedLocation,
         rackLabel: getOptionLabel(rackOptions, rackFilter, "Todos"),
-        totalQuantity,
+        totalGrams,
+        totalMilliliters,
+        totalPieces,
         totalValue,
         warehouseLabel: getOptionLabel(warehouseOptions, warehouseFilter, "Todos"),
       });
@@ -2940,112 +3126,419 @@ function InventoryView({
   }
 
   return (
-    <div>
+    <div className="pb-24">
       <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <PageHeader title="Inventario y existencias" subtitle={`Recepciones cerradas en almacén · ${selectedLocation}`} />
-        <Button variant="secondary" disabled={loading} onClick={() => void loadRows()}>{loading ? "Actualizando..." : "Actualizar"}</Button>
-      </div>
+        <PageHeader title="Inventario y existencias" subtitle={`Control de insumos y consumos · ${selectedLocation}`} />
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Subtabs Switcher */}
+          <div className="inline-flex rounded-xl bg-[#EFECE6] p-1 shadow-inner">
+            <button
+              type="button"
+              onClick={() => setActiveTab("almacen")}
+              className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-black transition ${
+                activeTab === "almacen"
+                  ? "bg-white text-stone-950 shadow-sm"
+                  : "text-stone-600 hover:text-stone-950"
+              }`}
+            >
+              <span>📦 Almacén y Stock</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("consumos")}
+              className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-black transition ${
+                activeTab === "consumos"
+                  ? "bg-amber-500 text-white shadow-sm"
+                  : "text-stone-600 hover:text-stone-950"
+              }`}
+            >
+              <span>🥣 Consumo por Lotes</span>
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${
+                activeTab === "consumos" ? "bg-amber-700 text-white" : "bg-stone-200 text-stone-700"
+              }`}>
+                {scopedConsumptionLots.length}
+              </span>
+            </button>
+          </div>
 
-      <div className="grid gap-3 md:grid-cols-4">
-        <KpiCard label="Partidas" value={visible.length} sub="en almacén" accent />
-        <KpiCard label="Cantidad recibida" value={formatNumber(totalQuantity)} />
-        <KpiCard label="Valor estimado" value={formatCurrency(totalValue)} />
-        <KpiCard label="Cuidado especial" value={specialCare} alert={specialCare > 0} />
-      </div>
-
-      <div className="mt-5 grid gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 md:grid-cols-2 xl:grid-cols-6 xl:items-end">
-        <Field label="Fecha inicial">
-          <input value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} type="date" className="field-input" />
-        </Field>
-        <Field label="Fecha final">
-          <input value={dateTo} onChange={(event) => setDateTo(event.target.value)} type="date" className="field-input" />
-        </Field>
-        <Field label="Almacén">
-          <select
-            value={warehouseFilter}
-            onChange={(event) => {
-              setWarehouseFilter(event.target.value);
-              setRackFilter("todos");
+          <Button
+            variant="secondary"
+            disabled={loading || consumptionLoading}
+            onClick={() => {
+              void loadRows();
+              void loadConsumptions();
             }}
-            className="field-input"
           >
-            <option value="todos">Todos</option>
-            {warehouseOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-          </select>
-        </Field>
-        <Field label="Rack">
-          <select value={rackFilter} onChange={(event) => setRackFilter(event.target.value)} className="field-input">
-            <option value="todos">Todos</option>
-            {rackOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-          </select>
-        </Field>
-        <Field label="Categoría">
-          <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="field-input">
-            <option value="todos">Todas</option>
-            {categoryOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-          </select>
-        </Field>
-        <div className="mb-4 flex flex-col gap-2">
-          <Button disabled={visible.length === 0 || reportLoading} onClick={() => void generateInventoryReport()}>
-            {reportLoading ? "Generando..." : "Reporte PDF"}
+            {loading || consumptionLoading ? "Actualizando..." : "Actualizar"}
           </Button>
-          <div className="rounded-lg bg-[#FAFAF8] px-3 py-2 text-center text-xs font-bold text-stone-500">
-            {visible.length} de {scopedRows.length} partidas
+        </div>
+      </div>
+
+      {error ? <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
+
+      {/* TAB 1: ALMACEN Y EXISTENCIAS */}
+      {activeTab === "almacen" && (
+        <div>
+          <div className="grid gap-3 md:grid-cols-4">
+            <KpiCard label="Disponible en gramos" value={formatNumber(totalGrams)} sub="g" accent />
+            <KpiCard label="Disponible en mililitros" value={formatNumber(totalMilliliters)} sub="ml" />
+            <KpiCard label="Disponible en piezas" value={formatNumber(totalPieces)} sub="pzas" />
+            <KpiCard label="Valor disponible" value={formatCurrency(totalValue)} />
+          </div>
+
+          <div className="mt-5 grid gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 md:grid-cols-2 xl:grid-cols-[1.5fr_160px_140px_130px_140px_auto] xl:items-end">
+            <Field label="Buscar insumo / producto">
+              <input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                className="field-input"
+                placeholder="Nombre del insumo, marca, presentación..."
+              />
+            </Field>
+            <Field label="Existencias al corte de">
+              <input value={dateTo} onChange={(event) => setDateTo(event.target.value)} type="date" className="field-input" />
+            </Field>
+            <Field label="Almacén">
+              <select
+                value={warehouseFilter}
+                onChange={(event) => {
+                  setWarehouseFilter(event.target.value);
+                  setRackFilter("todos");
+                }}
+                className="field-input"
+              >
+                <option value="todos">Todos</option>
+                {warehouseOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Rack">
+              <select value={rackFilter} onChange={(event) => setRackFilter(event.target.value)} className="field-input">
+                <option value="todos">Todos</option>
+                {rackOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Categoría">
+              <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="field-input">
+                <option value="todos">Todas</option>
+                {categoryOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </select>
+            </Field>
+            <div className="mb-4 flex flex-col gap-2">
+              <Button disabled={visible.length === 0 || reportLoading} onClick={() => void generateInventoryReport()}>
+                {reportLoading ? "Generando..." : "Reporte PDF"}
+              </Button>
+              <div className="rounded-lg bg-[#FAFAF8] px-3 py-2 text-center text-xs font-bold text-stone-500">
+                {visible.length} de {scopedRows.length} partidas
+              </div>
+            </div>
+          </div>
+
+          <Card className="mt-5 p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[#EDE8E3]">
+                    {["Ingreso", "Producto", "Sucursal", "Almacén", "Rack", "Categoría", "Existencia base", "Lote", "Caducidad", "Cuidado", "Valor disponible"].map((label) => (
+                      <th key={label} className="whitespace-nowrap px-4 py-3 text-[11px] font-bold uppercase tracking-[0.06em] text-stone-400">{label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((row) => (
+                    <tr key={row.receipt_item_id} className="border-b border-[#F5F1EE] transition hover:bg-[#FAFAF7]">
+                      <td className="whitespace-nowrap px-4 py-3">
+                        <p className="font-bold text-[#B45309]">{row.receipt_folio}</p>
+                        <p className="text-xs font-semibold text-stone-500">{formatDate(row.stored_at)}</p>
+                      </td>
+                      <td className="min-w-[280px] px-4 py-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <ProductThumb product={row} />
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-bold text-stone-950">{row.product}</p>
+                            <p className="truncate text-xs font-semibold text-stone-500">{row.presentation ?? "Sin presentación"}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.location_name}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-stone-700">
+                        <p className="font-semibold text-stone-800">{row.warehouse_name ?? row.almacen ?? "Sin almacén"}</p>
+                        <p className="text-xs text-stone-500">{row.almacen ?? "Sin tipo"}</p>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-stone-700">
+                        <p className="font-semibold text-stone-800">{row.rack_name ?? "Sin rack"}</p>
+                        <p className="text-xs text-stone-500">{row.rack_position ?? row.storage_type ?? "—"}</p>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.category_name ?? "Sin categoría"}</td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        {row.base_unit ? (
+                          <>
+                            <p className="font-bold text-stone-950">{formatNumber(row.available_base_quantity)} {row.base_unit}</p>
+                            <p className="text-xs font-semibold text-stone-500">
+                              Recibido {formatNumber(row.received_base_quantity)} · Consumido {formatNumber(row.consumed_base_quantity)}
+                            </p>
+                          </>
+                        ) : (
+                          <span className="font-semibold text-amber-700">Pendiente de normalizar</span>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.lot_code || "—"}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.expires_at ? formatDate(row.expires_at) : "—"}</td>
+                      <td className="whitespace-nowrap px-4 py-3">{row.delicate_management ? <Badge status="cuidado_especial" /> : <span className="text-stone-400">Normal</span>}</td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        <p className="font-bold text-stone-950">{formatCurrency(row.available_value)}</p>
+                        {row.base_unit ? <p className="text-xs font-semibold text-stone-500">{formatCurrency(row.base_unit_cost)} / {row.base_unit}</p> : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {loading ? <EmptyState message="Cargando inventario..." /> : null}
+            {!loading && visible.length === 0 ? <EmptyState message="No hay partidas en almacén con estos filtros" /> : null}
+          </Card>
+        </div>
+      )}
+
+      {/* TAB 2: CONSUMO DE INSUMOS POR LOTES */}
+      {activeTab === "consumos" && (
+        <div>
+          <div className="grid gap-3 md:grid-cols-4">
+            <KpiCard label="Lotes procesados" value={visibleConsumptionLots.length} sub={`de ${scopedConsumptionLots.length}`} accent />
+            <KpiCard label="Cantidad producida" value={formatNumber(totalConsumptionPieces)} />
+            <KpiCard label="Insumos consumidos" value={formatNumber(totalConsumptionIngredients)} sub="partidas de receta" />
+            <KpiCard label="Costo total de insumos" value={formatCurrency(totalConsumptionCost)} />
+          </div>
+
+          <div className="mt-5 grid gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 md:grid-cols-[180px_180px_1fr_auto] md:items-end">
+            <Field label="Fecha inicial">
+              <input value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} type="date" className="field-input" />
+            </Field>
+            <Field label="Fecha final">
+              <input value={dateTo} onChange={(event) => setDateTo(event.target.value)} type="date" className="field-input" />
+            </Field>
+            <Field label="Buscar lote, producto o insumo">
+              <input
+                value={consumptionSearch}
+                onChange={(event) => setConsumptionSearch(event.target.value)}
+                className="field-input"
+                placeholder="PROD-..., Alfajor, Harina, Mantequilla..."
+              />
+            </Field>
+            <div className="mb-4 rounded-lg bg-[#FAFAF8] px-3 py-2 text-center text-xs font-bold text-stone-500">
+              {visibleConsumptionLots.length} lotes
+            </div>
+          </div>
+
+          {consumptionLoading ? (
+            <div className="mt-6">
+              <EmptyState message="Calculando y cargando consumo de insumos..." />
+            </div>
+          ) : visibleConsumptionLots.length === 0 ? (
+            <div className="mt-6">
+              <EmptyState message="No hay consumos de lotes de producción para los filtros seleccionados." />
+            </div>
+          ) : (
+            <div className="mt-6 space-y-4">
+              {visibleConsumptionLots.map((lot) => (
+                <div
+                  key={lot.lot_id}
+                  className="overflow-hidden rounded-2xl border border-[#EDE8E3] bg-white p-5 shadow-[0_1px_4px_rgba(28,25,23,0.04)] transition hover:border-[#D6C9BF] hover:shadow-[0_8px_24px_rgba(28,25,23,0.08)]"
+                >
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between border-b border-[#F5F1EE] pb-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-[#B45309] text-base">{lot.folio}</span>
+                        <span className="rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-black text-amber-900">
+                          {lot.location_name}
+                        </span>
+                        <span className="text-xs font-bold text-stone-400">
+                          · {formatDate(lot.production_date)}
+                        </span>
+                      </div>
+                      {lot.notes ? (
+                        <p className="text-xs text-stone-500 italic">Notas: {lot.notes}</p>
+                      ) : null}
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <p className="text-[10px] font-extrabold uppercase tracking-wider text-stone-400">Costo en Insumos</p>
+                        <p className="text-lg font-black text-stone-950">{formatCurrency(lot.total_ingredient_cost)}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void inspectLotConsumption(lot.lot_id)}
+                        disabled={lotDetailLoading && inspectingLotId === lot.lot_id}
+                        className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-extrabold text-amber-950 transition hover:bg-amber-100 shadow-sm"
+                      >
+                        {lotDetailLoading && inspectingLotId === lot.lot_id ? "Cargando..." : "🥣 Ver Desglose de Insumos"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <div className="rounded-xl bg-[#FAFAF8] p-3.5 border border-[#EDE8E3]">
+                      <p className="text-[10px] font-extrabold uppercase tracking-wider text-stone-500 mb-2">
+                        🧁 Productos Producidos ({lot.total_products_count} productos · {formatNumber(lot.total_produced_pieces)} piezas)
+                      </p>
+                      <p className="text-xs font-semibold text-stone-800 leading-relaxed">
+                        {lot.products_summary}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl bg-amber-50/40 p-3.5 border border-amber-200/60">
+                      <p className="text-[10px] font-extrabold uppercase tracking-wider text-amber-900 mb-2">
+                        🌾 Insumos Clave Requeridos ({lot.total_ingredients_count} partidas)
+                      </p>
+                      <p className="text-xs font-semibold text-stone-700 leading-relaxed line-clamp-2">
+                        {lot.top_ingredients_summary}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* MODAL: DESGLOSE DE CONSUMO DE INSUMOS POR LOTE */}
+      {lotDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/60 p-4 backdrop-blur-sm">
+          <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col rounded-3xl border border-[#EDE8E3] bg-white shadow-2xl">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between border-b border-[#EDE8E3] p-6 bg-[#FAFAF8] rounded-t-3xl">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500 text-sm font-black text-white">🥣</span>
+                  <h3 className="text-xl font-black text-stone-950">Desglose de Insumos del Lote</h3>
+                  <span className="rounded-lg bg-stone-200 px-2.5 py-0.5 text-xs font-extrabold text-stone-800">{lotDetail.folio}</span>
+                </div>
+                <p className="mt-1 text-xs font-bold text-stone-500">
+                  {lotDetail.location_name} · Producción del {formatDate(lotDetail.production_date)}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-stone-400">Costo Total Lote</p>
+                  <p className="text-xl font-black text-amber-900">{formatCurrency(lotDetail.totals.total_cost)}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLotDetail(null)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-stone-100 text-lg font-bold text-stone-500 transition hover:bg-stone-200 hover:text-stone-950"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {lotDetail.notes ? (
+                <div className="rounded-xl border border-stone-200 bg-stone-50 p-3 text-xs text-stone-700">
+                  <span className="font-bold">Notas del Lote:</span> {lotDetail.notes}
+                </div>
+              ) : null}
+
+              {lotDetail.products.map((prod) => (
+                <div key={prod.lot_item_id} className="rounded-2xl border border-[#EDE8E3] bg-white overflow-hidden shadow-sm">
+                  {/* Product Header */}
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between bg-[#F7F4F0] p-4 border-b border-[#EDE8E3]">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-base font-extrabold text-stone-950">{prod.product_name}</p>
+                        <span className="rounded-md bg-stone-900 px-2 py-0.5 text-xs font-bold text-white">
+                          {formatNumber(prod.quantity)} {prod.unit}
+                        </span>
+                      </div>
+                      {prod.has_recipe ? (
+                        <p className="mt-0.5 text-xs font-semibold text-amber-900 flex items-center gap-1.5">
+                          <span>📜 Receta: <b>{prod.recipe_name}</b></span>
+                          <span className="text-stone-400">·</span>
+                          <span>Rendimiento: <b>{prod.recipe_yield_pieces || prod.recipe_portions || 1} pz</b></span>
+                        </p>
+                      ) : (
+                        <p className="mt-0.5 text-xs font-bold text-amber-700">
+                          ✨ Producto comodín sin receta (no descuenta insumos)
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="text-right">
+                      <p className="text-[10px] font-extrabold uppercase tracking-wider text-stone-400">Costo Insumos</p>
+                      <p className="text-sm font-black text-stone-950">
+                        {formatCurrency(prod.ingredients.reduce((s, ing) => s + Number(ing.total_cost || 0), 0))}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Ingredients Table */}
+                  {prod.ingredients.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full border-collapse text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-[#EDE8E3] bg-white text-stone-400 text-[10px] font-black uppercase tracking-wider">
+                            <th className="px-4 py-2.5">Insumo / Materia Prima</th>
+                            <th className="px-4 py-2.5">Origen / Receta</th>
+                            <th className="px-4 py-2.5 text-right">Cantidad Consumida</th>
+                            <th className="px-4 py-2.5 text-right">Costo Unitario</th>
+                            <th className="px-4 py-2.5 text-right">Subtotal</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#F5F1EE]">
+                          {prod.ingredients.map((ing) => (
+                            <tr key={ing.id} className="hover:bg-stone-50/80 transition">
+                              <td className="px-4 py-2.5 font-bold text-stone-950">
+                                {ing.ingredient_name}
+                              </td>
+                              <td className="px-4 py-2.5">
+                                {ing.is_subrecipe ? (
+                                  <span className="inline-flex items-center gap-1 rounded-md bg-purple-50 border border-purple-200 px-2 py-0.5 text-[10px] font-extrabold text-purple-900">
+                                    🌿 Subreceta: {ing.subrecipe_name}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-extrabold text-emerald-900">
+                                    ✨ Directo
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2.5 text-right font-extrabold text-amber-950">
+                                {formatNumber(ing.quantity_consumed)} {ing.unit}
+                              </td>
+                              <td className="px-4 py-2.5 text-right font-semibold text-stone-500">
+                                {ing.unit_cost > 0 ? formatCurrency(ing.unit_cost) : "—"}
+                              </td>
+                              <td className="px-4 py-2.5 text-right font-black text-stone-950">
+                                {formatCurrency(ing.total_cost)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="p-4 text-center text-xs font-semibold text-stone-400">
+                      Sin insumos asociados a este producto.
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between border-t border-[#EDE8E3] bg-[#FAFAF8] p-5 rounded-b-3xl">
+              <div className="flex items-center gap-4 text-xs font-bold text-stone-600">
+                <span>Total Insumos: <b>{lotDetail.totals.total_ingredients_count}</b></span>
+                <span>Directos: <b>{lotDetail.totals.total_direct_ingredients}</b></span>
+                <span>De Subrecetas: <b>{lotDetail.totals.total_subrecipe_ingredients}</b></span>
+              </div>
+              <Button onClick={() => setLotDetail(null)}>Cerrar</Button>
+            </div>
           </div>
         </div>
-      </div>
-
-      {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
-
-      <Card className="mt-5 p-0">
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm">
-            <thead>
-              <tr className="border-b border-[#EDE8E3]">
-                {["Ingreso", "Producto", "Sucursal", "Almacén", "Rack", "Categoría", "Recibido", "Lote", "Caducidad", "Cuidado", "Valor"].map((label) => (
-                  <th key={label} className="whitespace-nowrap px-4 py-3 text-[11px] font-bold uppercase tracking-[0.06em] text-stone-400">{label}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((row) => (
-                <tr key={row.receipt_item_id} className="border-b border-[#F5F1EE] transition hover:bg-[#FAFAF7]">
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <p className="font-bold text-[#B45309]">{row.receipt_folio}</p>
-                    <p className="text-xs font-semibold text-stone-500">{formatDate(row.stored_at)}</p>
-                  </td>
-                  <td className="min-w-[280px] px-4 py-3">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <ProductThumb product={row} />
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-bold text-stone-950">{row.product}</p>
-                        <p className="truncate text-xs font-semibold text-stone-500">{row.presentation ?? "Sin presentación"}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.location_name}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">
-                    <p className="font-semibold text-stone-800">{row.warehouse_name ?? row.almacen ?? "Sin almacén"}</p>
-                    <p className="text-xs text-stone-500">{row.almacen ?? "Sin tipo"}</p>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">
-                    <p className="font-semibold text-stone-800">{row.rack_name ?? "Sin rack"}</p>
-                    <p className="text-xs text-stone-500">{row.rack_position ?? row.storage_type ?? "—"}</p>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.category_name ?? "Sin categoría"}</td>
-                  <td className="whitespace-nowrap px-4 py-3 font-semibold text-stone-700">{formatNumber(row.received_quantity)}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.lot_code || "—"}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.expires_at ? formatDate(row.expires_at) : "—"}</td>
-                  <td className="whitespace-nowrap px-4 py-3">{row.delicate_management ? <Badge status="cuidado_especial" /> : <span className="text-stone-400">Normal</span>}</td>
-                  <td className="whitespace-nowrap px-4 py-3 font-bold text-stone-950">{formatCurrency(row.total_cost)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {loading ? <EmptyState message="Cargando inventario..." /> : null}
-        {!loading && visible.length === 0 ? <EmptyState message="No hay partidas en almacén con estos filtros" /> : null}
-      </Card>
+      )}
     </div>
   );
 }
@@ -3615,6 +4108,7 @@ function ProductionView({
   const [notes, setNotes] = useState("");
   const [productionLots, setProductionLots] = useState<ProductionLotSummary[]>([]);
   const [editingLot, setEditingLot] = useState<ProductionLotDetail | null>(null);
+  const [clientRequestId, setClientRequestId] = useState(() => globalThis.crypto.randomUUID());
   const [loading, setLoading] = useState(false);
   const [lotsLoading, setLotsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -3783,6 +4277,7 @@ function ProductionView({
     setBufferItems([]);
     setNotes("");
     setEditingLot(null);
+    setClientRequestId(globalThis.crypto.randomUUID());
   }
 
   async function saveProductionLot() {
@@ -3815,10 +4310,11 @@ function ProductionView({
         ...payload,
         p_lot_id: editingLot.lot_id,
       })
-      : await supabase.rpc("save_abastecimiento_production_lot", {
+      : await supabase.rpc("save_abastecimiento_production_lot_idempotent", {
         ...payload,
         p_location_id: targetLocationId,
         p_production_date: productionDate || null,
+        p_client_request_id: clientRequestId,
       });
     setSaving(false);
 
@@ -4381,6 +4877,7 @@ function QualityView({
       p_notes: generalNotes.trim() || null,
       p_items: items.map((it) => ({
         finished_product_id: it.finished_product_id,
+        product_name: it.product_name,
         declared_quantity: it.declared_quantity,
         point_of_sale_quantity: it.point_of_sale_quantity,
         unit: it.unit || "pieza",
@@ -5042,6 +5539,7 @@ function MermaPvView({
       category: string | null;
       subcategory: string | null;
       image_url: string | null;
+      unit_price?: number;
       pdv_received_quantity: number;
       unit: string;
     };
@@ -5058,6 +5556,7 @@ function MermaPvView({
       category: p.category,
       subcategory: p.subcategory,
       image_url: p.image_url,
+      unit_price: Number(p.unit_price || 0),
       pdv_received_quantity: Number(p.pdv_received_quantity || 0),
       merma_quantity: 0,
       unit: p.unit || "pieza",
@@ -5180,6 +5679,8 @@ function MermaPvView({
       p_notes: generalNotes.trim() || null,
       p_items: items.map((it) => ({
         finished_product_id: it.finished_product_id,
+        product_name: it.product_name,
+        unit_price: it.unit_price || 0,
         pdv_received_quantity: it.pdv_received_quantity,
         merma_quantity: it.merma_quantity,
         unit: it.unit || "pieza",
@@ -5207,14 +5708,18 @@ function MermaPvView({
       total_merma?: number;
       total_desecho?: number;
       total_recuperacion?: number;
+      total_desecho_value?: number;
+      total_recuperacion_value?: number;
       merma_percentage?: number;
     };
     setSuccessMessage(
       `✓ Registro de Merma PV ${res?.folio ?? ""} guardado con éxito (${formatNumber(
         res?.total_merma ?? 0
-      )} unidades mermadas · 🗑️ ${formatNumber(res?.total_desecho ?? 0)} en Desecho / ♻️ ${formatNumber(
-        res?.total_recuperacion ?? 0
-      )} en Recuperación).`
+      )} unidades mermadas · 🗑️ ${formatNumber(res?.total_desecho ?? 0)} en Desecho [${formatCurrency(
+        res?.total_desecho_value ?? 0
+      )}] / ♻️ ${formatNumber(res?.total_recuperacion ?? 0)} en Recuperación [${formatCurrency(
+        res?.total_recuperacion_value ?? 0
+      )}]).`
     );
     setGeneralNotes("");
     await Promise.all([loadMermaRecords(), loadProductsToMerma(), loadQualityVerifications()]);
@@ -5246,6 +5751,14 @@ function MermaPvView({
     (sum, it) => (it.destination === "recuperacion" ? sum + Number(it.merma_quantity || 0) : sum),
     0
   );
+  const totalDesechoValue = items.reduce(
+    (sum, it) => (it.destination === "desecho" ? sum + (Number(it.merma_quantity || 0) * Number(it.unit_price || 0)) : sum),
+    0
+  );
+  const totalRecuperacionValue = items.reduce(
+    (sum, it) => (it.destination === "recuperacion" ? sum + (Number(it.merma_quantity || 0) * Number(it.unit_price || 0)) : sum),
+    0
+  );
   const mermaPercentage = totalReceived > 0 ? Math.round((totalMerma / totalReceived) * 100) : 0;
   const soldPercentage = totalReceived > 0 ? Math.round((totalSold / totalReceived) * 100) : 100;
   const itemsWithMermaCount = items.filter((it) => it.merma_quantity > 0).length;
@@ -5254,6 +5767,8 @@ function MermaPvView({
   const histTotalMerma = mermaRecords.reduce((sum, r) => sum + Number(r.total_merma || 0), 0);
   const histTotalDesecho = mermaRecords.reduce((sum, r) => sum + Number(r.total_desecho || 0), 0);
   const histTotalRecuperacion = mermaRecords.reduce((sum, r) => sum + Number(r.total_recuperacion || 0), 0);
+  const histTotalDesechoValue = mermaRecords.reduce((sum, r) => sum + Number(r.total_desecho_value || 0), 0);
+  const histTotalRecuperacionValue = mermaRecords.reduce((sum, r) => sum + Number(r.total_recuperacion_value || 0), 0);
   const histRecoveryRate = histTotalMerma > 0 ? Math.round((histTotalRecuperacion / histTotalMerma) * 100) : 0;
 
   const visibleItems = items.filter((it) =>
@@ -5314,13 +5829,13 @@ function MermaPvView({
         <KpiCard
           label="🗑️ A Desecho (Basura)"
           value={formatNumber(totalDesecho)}
-          sub="Pérdida total no recuperable"
+          sub={`Pérdida: ${formatCurrency(totalDesechoValue)}`}
           alert={totalDesecho > 0}
         />
         <KpiCard
           label="♻️ A Recuperación"
           value={formatNumber(totalRecuperacion)}
-          sub="Pan molido, budín, donación..."
+          sub={`Valor: ${formatCurrency(totalRecuperacionValue)}`}
           accent={totalRecuperacion > 0}
         />
       </div>
@@ -5483,6 +5998,11 @@ function MermaPvView({
                                   {item.packaging}
                                 </span>
                               ) : null}
+                              {item.unit_price > 0 ? (
+                                <span className="inline-flex items-center rounded-md bg-amber-50 border border-amber-200/80 px-2 py-0.5 text-xs font-bold text-amber-900">
+                                  {formatCurrency(item.unit_price)} / {unitLabel}
+                                </span>
+                              ) : null}
                             </div>
                           </div>
 
@@ -5594,6 +6114,11 @@ function MermaPvView({
                             <label className="block text-[11px] font-extrabold uppercase tracking-wider text-stone-800">
                               ¿A dónde se va la merma? ({formatNumber(item.merma_quantity)} {unitLabel})
                             </label>
+                            {item.unit_price > 0 ? (
+                              <span className="text-xs font-black text-stone-900">
+                                Valor: {formatCurrency(item.merma_quantity * item.unit_price)}
+                              </span>
+                            ) : null}
                           </div>
 
                           <div className="grid grid-cols-2 gap-2">
@@ -5720,7 +6245,7 @@ function MermaPvView({
                   <div className="rounded-xl bg-[#F5F1EE] px-4 py-2 text-right">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-stone-500">Resumen</p>
                     <p className="text-sm font-extrabold text-stone-950">
-                      PDV: <span className="text-[#B45309]">{formatNumber(totalReceived)}</span> · Vendido: <span className="text-emerald-700">{formatNumber(totalSold)}</span> · 🗑️ Desecho: <span className="text-red-700">{formatNumber(totalDesecho)}</span> · ♻️ Recup: <span className="text-emerald-700">{formatNumber(totalRecuperacion)}</span>
+                      PDV: <span className="text-[#B45309]">{formatNumber(totalReceived)}</span> · Vendido: <span className="text-emerald-700">{formatNumber(totalSold)}</span> · 🗑️ Desecho: <span className="text-red-700">{formatNumber(totalDesecho)} ({formatCurrency(totalDesechoValue)})</span> · ♻️ Recup: <span className="text-emerald-700">{formatNumber(totalRecuperacion)} ({formatCurrency(totalRecuperacionValue)})</span>
                     </p>
                   </div>
 
@@ -5749,13 +6274,13 @@ function MermaPvView({
             <div className="rounded-2xl border border-red-200 bg-red-50/50 p-4 shadow-sm">
               <p className="text-xs font-bold uppercase tracking-wider text-red-800">🗑️ Total a Desecho</p>
               <p className="mt-1 text-2xl font-black text-red-900">{formatNumber(histTotalDesecho)}</p>
-              <p className="mt-0.5 text-xs text-red-700 font-semibold">Pérdida neta acumulada</p>
+              <p className="mt-0.5 text-xs text-red-700 font-extrabold">{formatCurrency(histTotalDesechoValue)} en pérdida</p>
             </div>
 
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 shadow-sm">
               <p className="text-xs font-bold uppercase tracking-wider text-emerald-800">♻️ Total en Recuperación</p>
               <p className="mt-1 text-2xl font-black text-emerald-900">{formatNumber(histTotalRecuperacion)}</p>
-              <p className="mt-0.5 text-xs text-emerald-700 font-semibold">Reprocesado / Reutilizado</p>
+              <p className="mt-0.5 text-xs text-emerald-700 font-extrabold">{formatCurrency(histTotalRecuperacionValue)} recuperable</p>
             </div>
 
             <div className="rounded-2xl border border-[#EDE8E3] bg-white p-4 shadow-sm">
@@ -5802,8 +6327,26 @@ function MermaPvView({
                   if (key === "origen") return <span className="text-xs text-stone-600">{r.verification_folio ?? "Recepción del día"}</span>;
                   if (key === "recibido") return <span className="font-bold">{formatNumber(r.total_received_pdv)}</span>;
                   if (key === "vendido") return <span className="font-bold text-emerald-700">{formatNumber(r.total_sold)}</span>;
-                  if (key === "desecho") return <span className={`font-bold ${Number(r.total_desecho) > 0 ? "text-red-700" : "text-stone-400"}`}>{formatNumber(r.total_desecho ?? 0)}</span>;
-                  if (key === "recuperacion") return <span className={`font-bold ${Number(r.total_recuperacion) > 0 ? "text-emerald-700 font-extrabold" : "text-stone-400"}`}>{formatNumber(r.total_recuperacion ?? 0)}</span>;
+                  if (key === "desecho") {
+                    const qty = Number(r.total_desecho || 0);
+                    const val = Number(r.total_desecho_value || 0);
+                    return (
+                      <div>
+                        <span className={`font-bold ${qty > 0 ? "text-red-700" : "text-stone-400"}`}>{formatNumber(qty)}</span>
+                        {qty > 0 ? <p className="text-[10px] font-extrabold text-red-600">{formatCurrency(val)}</p> : null}
+                      </div>
+                    );
+                  }
+                  if (key === "recuperacion") {
+                    const qty = Number(r.total_recuperacion || 0);
+                    const val = Number(r.total_recuperacion_value || 0);
+                    return (
+                      <div>
+                        <span className={`font-bold ${qty > 0 ? "text-emerald-700 font-extrabold" : "text-stone-400"}`}>{formatNumber(qty)}</span>
+                        {qty > 0 ? <p className="text-[10px] font-extrabold text-emerald-600">{formatCurrency(val)}</p> : null}
+                      </div>
+                    );
+                  }
                   if (key === "merma") return <span className={`font-bold ${Number(r.total_merma) > 0 ? "text-red-700" : "text-stone-400"}`}>{formatNumber(r.total_merma)}</span>;
                   if (key === "porcentaje") {
                     const statusKey = pct === 0 ? "sin_merma" : pct < 20 ? "merma_parcial" : "merma_alta";
@@ -5872,10 +6415,12 @@ function MermaPvView({
               <div className="rounded-xl border border-red-200 bg-red-50/50 p-3 text-center">
                 <p className="text-[10px] font-bold uppercase text-red-800">🗑️ Desecho</p>
                 <p className="text-lg font-black text-red-900">{formatNumber(inspectingRecord.total_desecho ?? 0)}</p>
+                <p className="text-[11px] font-extrabold text-red-700">{formatCurrency(inspectingRecord.total_desecho_value ?? 0)}</p>
               </div>
               <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3 text-center">
                 <p className="text-[10px] font-bold uppercase text-emerald-800">♻️ Recuperación</p>
                 <p className="text-lg font-black text-emerald-900">{formatNumber(inspectingRecord.total_recuperacion ?? 0)}</p>
+                <p className="text-[11px] font-extrabold text-emerald-700">{formatCurrency(inspectingRecord.total_recuperacion_value ?? 0)}</p>
               </div>
             </div>
 
@@ -5902,6 +6447,7 @@ function MermaPvView({
                           <p className="text-xs text-stone-500">
                             {[it.category, it.subcategory].filter(Boolean).join(" · ")}
                             {it.packaging ? ` · ${it.packaging}` : ""}
+                            {Number(it.unit_price || 0) > 0 ? ` · ${formatCurrency(it.unit_price!)}/${unitLabel}` : ""}
                           </p>
                         </div>
                       </div>
@@ -5912,6 +6458,7 @@ function MermaPvView({
                         </p>
                         <p className={`mt-0.5 text-xs font-bold ${hasMerma ? "text-red-700" : "text-stone-400"}`}>
                           Merma: {formatNumber(it.merma_quantity)} {unitLabel}
+                          {hasMerma && Number(it.total_price || 0) > 0 ? ` (${formatCurrency(it.total_price!)})` : ""}
                         </p>
                       </div>
                     </div>
@@ -5929,13 +6476,23 @@ function MermaPvView({
                               isRecup ? "bg-emerald-200 text-emerald-950" : "bg-red-200 text-red-950"
                             }`}
                           >
-                            {isRecup ? `♻️ Recuperación (${it.recovery_action || "Reproceso"})` : "🗑️ Desecho (Basura)"}
+                            {isRecup ? "♻️ Recuperación / Reproceso" : "🗑️ Desecho / Basura"}
                           </span>
-                          <span className="text-stone-500">· Motivo: {it.reason}</span>
+                          {isRecup && it.recovery_action ? (
+                            <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-900 font-bold">
+                              {it.recovery_action}
+                            </span>
+                          ) : null}
+                          <span className="text-stone-500 font-normal">· Motivo: {it.reason}</span>
+                          {Number(it.total_price || 0) > 0 ? (
+                            <span className="ml-auto font-black text-stone-900">
+                              Importe: {formatCurrency(it.total_price!)}
+                            </span>
+                          ) : null}
                         </div>
                         {it.notes ? (
-                          <p className="mt-1.5 text-stone-700">
-                            <span className="font-semibold">Detalle:</span> {it.notes}
+                          <p className="mt-1 text-stone-700">
+                            <span className="font-semibold">Nota:</span> {it.notes}
                           </p>
                         ) : null}
                       </div>
@@ -6043,7 +6600,125 @@ function SettingsView({ supabase }: { supabase: ReturnType<typeof createBrowserS
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title="Ajustes" subtitle="Configuración del sistema · solo super administradores" />
+      <MinimaxInventorySettingsPanel supabase={supabase} />
       <WhatsAppSettingsPanel supabase={supabase} />
+    </div>
+  );
+}
+
+function MinimaxInventorySettingsPanel({ supabase }: { supabase: ReturnType<typeof createBrowserSupabaseClient> }) {
+  const [status, setStatus] = useState<MinimaxInventoryStatus | null>(null);
+  const [apiKey, setApiKey] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [normalizing, setNormalizing] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadStatus = useCallback(async () => {
+    if (!supabase) return;
+    const { data, error: statusError } = await supabase.rpc("get_abastecimiento_minimax_settings_status");
+    if (statusError) {
+      setError(statusError.message);
+      return;
+    }
+    const value = Array.isArray(data) ? data[0] : data;
+    setStatus(value as MinimaxInventoryStatus);
+  }, [supabase]);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      await loadStatus();
+      if (active) setLoading(false);
+    })();
+    return () => { active = false; };
+  }, [loadStatus]);
+
+  async function configure() {
+    if (!supabase || saving || apiKey.trim().length < 12) return;
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    const { error: invokeError } = await supabase.functions.invoke("normalize-production-inventory", {
+      body: { action: "configure", apiKey: apiKey.trim() },
+    });
+    setSaving(false);
+    if (invokeError) {
+      setError(invokeError.message);
+      return;
+    }
+    setApiKey("");
+    setMessage("Clave validada y guardada de forma segura.");
+    await loadStatus();
+  }
+
+  async function normalizePending() {
+    if (!supabase || normalizing) return;
+    setNormalizing(true);
+    setError(null);
+    setMessage(null);
+    const { data, error: invokeError } = await supabase.functions.invoke("normalize-production-inventory", {
+      body: { action: "normalize", limit: 50 },
+    });
+    setNormalizing(false);
+    if (invokeError) {
+      setError(invokeError.message);
+      return;
+    }
+    const result = data as { applied?: number; unresolved?: number } | null;
+    setMessage(`Se normalizaron ${result?.applied ?? 0} insumos${result?.unresolved ? `; ${result.unresolved} requieren revisión` : ""}.`);
+    await loadStatus();
+  }
+
+  return (
+    <div className="rounded-2xl border border-[#E5DED7] bg-white p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-lg font-extrabold text-stone-950">Normalización de inventario</p>
+          <p className="mt-1 max-w-2xl text-sm text-stone-500">
+            Convierte presentaciones comerciales a gramos, mililitros o piezas antes de consumir recetas.
+          </p>
+        </div>
+        <span className="w-fit rounded-full bg-stone-950 px-3 py-1 text-xs font-black text-white">MiniMax-M3</span>
+      </div>
+
+      {error ? <div className="mt-4"><AlertRow tone="red" message={error} /></div> : null}
+      {message ? <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">{message}</p> : null}
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+        <Field label={status?.configured ? "Reemplazar API key" : "API key de MiniMax"}>
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={apiKey}
+            onChange={(event) => setApiKey(event.target.value)}
+            className="field-input"
+            placeholder={status?.configured ? "La clave actual permanece oculta" : "Ingresa tu API key"}
+          />
+        </Field>
+        <Button disabled={saving || apiKey.trim().length < 12} onClick={() => void configure()}>
+          {saving ? "Validando..." : status?.configured ? "Reemplazar clave" : "Configurar clave"}
+        </Button>
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-4">
+        <KpiMini label="Conexión" value={loading ? "Consultando..." : status?.configured ? "Configurada" : "Sin configurar"} />
+        <KpiMini label="Insumos normalizados" value={`${status?.normalized_count ?? 0} / ${status?.total_count ?? 0}`} />
+        <KpiMini label="Rendimientos listos" value={`${status?.recipe_output_normalized_count ?? 0} / ${status?.recipe_output_total_count ?? 0}`} />
+        <KpiMini label="Insumos pendientes" value={status?.pending_count ?? 0} />
+      </div>
+
+      <div className="mt-5 flex flex-col gap-2 border-t border-[#EDE8E3] pt-5 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs font-semibold text-stone-500">La clave se guarda en Vault y nunca se vuelve a mostrar en el navegador.</p>
+        <Button
+          variant="secondary"
+          disabled={!status?.configured || normalizing || status.pending_count === 0}
+          onClick={() => void normalizePending()}
+        >
+          {normalizing ? "Normalizando..." : "Normalizar siguientes 50"}
+        </Button>
+      </div>
     </div>
   );
 }
