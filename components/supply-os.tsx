@@ -8,6 +8,10 @@ import {
   createBrowserSupabaseClient,
   isSupabaseConfigured,
 } from "@/lib/supabase/client";
+import {
+  type AbastecimientoDomainEvent,
+  useAbastecimientoRealtime,
+} from "@/lib/supabase/use-abastecimiento-realtime";
 
 type ViewId =
   | "Dashboard"
@@ -25,8 +29,11 @@ type ViewId =
 
 type UserRoleName = "super_admin" | "branch_admin" | "operative" | "app_user";
 type RequisitionRequestType = "ordinaria" | "urgente" | "programada";
-type RequisitionStatus = "pendiente" | "urgente" | "revisada" | "aprobada" | "cancelada" | "completado" | "completada";
-type PurchaseOrderStatus = "pendiente" | "urgente" | "aprobado" | "completado" | "cancelado" | "parcial";
+type RequisitionWorkflowStatus = "pendiente" | "revisando_compras" | "aprobada_compras" | "cancelada_compras" | "completado";
+type RequisitionStatus = RequisitionWorkflowStatus | "urgente" | "revisada" | "aprobada" | "cancelada" | "completado" | "completada";
+type PurchaseOrderWorkflowStatus = "revisando_gerencia" | "aprobado" | "rechazado" | "cancelado" | "completado";
+type PurchaseOrderStatus = PurchaseOrderWorkflowStatus | "pendiente" | "urgente" | "completado" | "parcial";
+type PurchaseOrderAction = "aprobar_contabilidad" | "aprobar_gerencia" | "rechazar" | "reenviar" | "cancelar";
 type ReceivingStatus = "pendiente" | "recibida" | "en_almacen";
 
 type UserRole = {
@@ -114,6 +121,7 @@ type SupplyRequisition = {
   created_at: string;
   items_count: number;
   estimated_total: number | string;
+  version?: number;
 };
 
 type SupplyRequisitionItem = {
@@ -129,6 +137,7 @@ type SupplyRequisitionItem = {
   selected: boolean;
   revision_note: string | null;
   unit_price: number | string | null;
+  unit_cost?: number | string | null;
   total_price: number | string | null;
   line_total: number | string;
   almacen: string | null;
@@ -139,6 +148,7 @@ type SupplyRequisitionDetail = SupplyRequisition & {
   approved_by: string | null;
   approved_by_name: string | null;
   approved_at: string | null;
+  cancelled_reason?: string | null;
   updated_at: string;
   items: SupplyRequisitionItem[];
 };
@@ -163,6 +173,16 @@ type PurchaseOrderRow = {
   created_at: string;
   items_count: number;
   estimated_total: number | string;
+  version?: number;
+  review_cycle?: number;
+  accounting_approved_by?: string | null;
+  accounting_approved_by_name?: string | null;
+  accounting_approved_at?: string | null;
+  management_approved_by?: string | null;
+  management_approved_by_name?: string | null;
+  management_approved_at?: string | null;
+  rejected_reason?: string | null;
+  cancelled_reason?: string | null;
 };
 
 type PurchaseOrderDetail = PurchaseOrderRow & {
@@ -191,6 +211,7 @@ type ReceivingOrderRow = {
   differences_count: number;
   total_ordered: number | string;
   total_received: number | string;
+  version?: number;
 };
 
 type ReceivingItem = {
@@ -334,6 +355,7 @@ type ProductionBufferItem = {
 
 type ProductionLotSummary = {
   lot_id: string;
+  version: number;
   folio: string;
   location_id: string;
   location_name: string;
@@ -362,6 +384,7 @@ type ProductionLotDetailItem = {
 
 type ProductionLotDetail = {
   lot_id: string;
+  version: number;
   folio: string;
   location_id: string;
   location_name: string;
@@ -652,6 +675,10 @@ const NAV_ITEMS: Array<{ id: ViewId; label: string; icon: string; tag?: string }
 
 const STATUS: Record<string, { label: string; className: string }> = {
   pendiente: { label: "Pendiente", className: "bg-amber-100 text-amber-700" },
+  revisando_compras: { label: "Revisando compras", className: "bg-blue-100 text-blue-700" },
+  aprobada_compras: { label: "Aprobada por compras", className: "bg-emerald-100 text-emerald-700" },
+  cancelada_compras: { label: "Cancelada por compras", className: "bg-stone-200 text-stone-600" },
+  revisando_gerencia: { label: "Revisando gerencia", className: "bg-blue-100 text-blue-700" },
   aprobado: { label: "Aprobado", className: "bg-emerald-100 text-emerald-700" },
   aprobada: { label: "Aprobada", className: "bg-emerald-100 text-emerald-700" },
   recibido: { label: "Recibido", className: "bg-blue-100 text-blue-700" },
@@ -684,19 +711,20 @@ const REQUEST_TYPE_OPTIONS: Array<[RequisitionRequestType, string]> = [
   ["programada", "Programada"],
 ];
 
-const REQUISITION_STATUS_OPTIONS: Array<[RequisitionStatus, string]> = [
+const REQUISITION_STATUS_OPTIONS: Array<[RequisitionWorkflowStatus, string]> = [
   ["pendiente", "Pendiente"],
-  ["urgente", "Urgente"],
-  ["revisada", "Revisada"],
-  ["aprobada", "Aprobada"],
-  ["cancelada", "Cancelada"],
+  ["revisando_compras", "Revisando compras"],
+  ["aprobada_compras", "Aprobada por compras"],
+  ["cancelada_compras", "Cancelada por compras"],
+  ["completado", "Completada"],
 ];
 
-const PURCHASE_ORDER_STATUS_OPTIONS: Array<[PurchaseOrderStatus, string]> = [
-  ["pendiente", "Pendiente"],
-  ["urgente", "Urgente"],
-  ["aprobado", "Aprobada"],
-  ["cancelado", "Cancelada"],
+const PURCHASE_ORDER_STATUS_OPTIONS: Array<[PurchaseOrderWorkflowStatus, string]> = [
+  ["revisando_gerencia", "Revisando gerencia"],
+  ["aprobado", "Aprobadas"],
+  ["rechazado", "Rechazadas"],
+  ["cancelado", "Canceladas"],
+  ["completado", "Completadas"],
 ];
 
 const APP_LOCALE = "es-MX";
@@ -708,17 +736,20 @@ const RECEIVING_STATUS_OPTIONS: Array<[ReceivingStatus, string]> = [
   ["en_almacen", "En almacén"],
 ];
 
-const SAMPLE_TRASPASOS: SampleRecord[] = [
-  { folio: "TRP-001", origen: "Teran", destino: "Aeropuerto", insumo: "Pan artesanal", cantidad: "40 pzas", estado: "en_transito" },
-  { folio: "TRP-002", origen: "Teran", destino: "San Cristobal", insumo: "Repostería surtida", cantidad: "25 pzas", estado: "completado" },
-  { folio: "TRP-003", origen: "San Cristobal", destino: "Aeropuerto", insumo: "Café espresso", cantidad: "2 kg", estado: "completado" },
-];
+type RealtimeDomain = "workspace" | "requisitions" | "purchases" | "receipts" | "inventory" | "production" | "quality" | "mermaPv";
+type RealtimeInvalidations = Record<RealtimeDomain, number>;
+type RealtimeBatch = { revision: number; events: AbastecimientoDomainEvent[] };
 
-const SAMPLE_MERMA: SampleRecord[] = [
-  { folio: "MRM-001", sucursal: "San Cristobal", insumo: "Leche entera", cantidad: "3 lt", tipo: "caducidad", valor: 66 },
-  { folio: "MRM-002", sucursal: "Teran", insumo: "Levadura fresca", cantidad: "1.5 kg", tipo: "merma", valor: 67.5 },
-  { folio: "MRM-003", sucursal: "Aeropuerto", insumo: "Pan artesanal", cantidad: "8 pzas", tipo: "caducidad", valor: 120 },
-];
+const INITIAL_REALTIME_INVALIDATIONS: RealtimeInvalidations = {
+  workspace: 0,
+  requisitions: 0,
+  purchases: 0,
+  receipts: 0,
+  inventory: 0,
+  production: 0,
+  quality: 0,
+  mermaPv: 0,
+};
 
 export default function SupplyOsApp() {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
@@ -737,10 +768,12 @@ export default function SupplyOsApp() {
   const [selectedLocation, setSelectedLocation] = useState("Todas");
   const [loading, setLoading] = useState(Boolean(supabase));
   const [dataError, setDataError] = useState<string | null>(null);
+  const [realtimeInvalidations, setRealtimeInvalidations] = useState<RealtimeInvalidations>(INITIAL_REALTIME_INVALIDATIONS);
+  const [realtimeBatch, setRealtimeBatch] = useState<RealtimeBatch>({ revision: 0, events: [] });
 
   const loadWorkspace = useCallback(
     async (activeUserId: string) => {
-      if (!supabase) return;
+      if (!supabase) return false;
       setDataError(null);
 
       const [
@@ -763,8 +796,8 @@ export default function SupplyOsApp() {
         supabase.from("inventory").select("id,product,unit_price,total_price,brand,presentation,image_url,almacen,location_id,category_id,warehouse_id,rack_id,delicate_management").order("product", { ascending: true }).limit(1000),
         supabase.from("inventory_locations").select("inventory_id,location_id").limit(5000),
         supabase.rpc("list_abastecimiento_areas"),
-        supabase.rpc("list_abastecimiento_requisitions"),
-        supabase.rpc("list_abastecimiento_purchase_orders"),
+        listAbastecimientoRequisitions(supabase),
+        listAbastecimientoPurchaseOrders(supabase),
         supabase.from("inventory_categories").select("id,name"),
         supabase.from("location_departaments").select("id,name"),
         supabase.from("location_areas").select("id,name"),
@@ -774,7 +807,10 @@ export default function SupplyOsApp() {
       ]);
 
       const firstError = roleRes.error ?? locationRes.error ?? productRes.error ?? inventoryLocationRes.error ?? areaRes.error ?? reqRes.error ?? purchaseRes.error ?? categoriesRes.error ?? deptRes.error ?? areaLinkRes.error ?? invAreasRes.error ?? invDeptsRes.error ?? profileRes.error;
-      if (firstError) setDataError(firstError.message);
+      if (firstError) {
+        setDataError(firstError.message);
+        return false;
+      }
 
       const availabilityMap = new Map<string, string[]>();
       ((inventoryLocationRes.data as InventoryLocationLink[] | null) ?? []).forEach((link) => {
@@ -856,7 +892,7 @@ export default function SupplyOsApp() {
       }
 
       // Operative users can only see their own requisitions
-      if (userRole && userRole.role === "operative") {
+      if (userRole && userRole.role === "operative" && !["compras", "produccion"].includes(normalize(userRole.department ?? ""))) {
         finalRequisitions = finalRequisitions.filter((req) => req.requested_by === activeUserId);
       }
 
@@ -870,9 +906,82 @@ export default function SupplyOsApp() {
       setInventoryAreas((invAreasRes.data as InventoryAreaLink[] | null) ?? []);
       setInventoryDepts((invDeptsRes.data as InventoryDepartmentLink[] | null) ?? []);
       setProfile((profileRes.data?.[0] as { full_name: string | null; email: string } | undefined) ?? null);
+      return true;
     },
     [supabase],
   );
+
+  const refreshWorkflowLists = useCallback(async () => {
+    if (!supabase || !user || !role) return false;
+
+    const [requisitionResult, purchaseResult] = await Promise.all([
+      listAbastecimientoRequisitions(supabase),
+      listAbastecimientoPurchaseOrders(supabase),
+    ]);
+    const refreshError = requisitionResult.error ?? purchaseResult.error;
+    if (refreshError) {
+      setDataError(refreshError.message);
+      return false;
+    }
+
+    const allowedLocationIds = role?.role === "super_admin"
+      ? null
+      : new Set(locations.map((location) => location.id));
+    let nextRequisitions = (requisitionResult.data as SupplyRequisition[] | null) ?? [];
+    let nextPurchaseOrders = (purchaseResult.data as PurchaseOrderRow[] | null) ?? [];
+
+    if (allowedLocationIds) {
+      nextRequisitions = nextRequisitions.filter((row) => allowedLocationIds.has(row.location_id));
+      nextPurchaseOrders = nextPurchaseOrders.filter((row) => row.location_id && allowedLocationIds.has(row.location_id));
+    }
+    if (role?.role === "operative" && !["compras", "produccion"].includes(normalize(role.department ?? ""))) {
+      nextRequisitions = nextRequisitions.filter((row) => row.requested_by === user.id);
+    }
+
+    setRequisitions(nextRequisitions);
+    setPurchaseOrders(nextPurchaseOrders);
+    setDataError(null);
+    return true;
+  }, [locations, role, supabase, user]);
+
+  const realtimeTopics = useMemo(() => {
+    if (!user) return [];
+    if (!role) return [`abastecimiento:user:${user.id}`];
+    const capabilities = getRealtimeLocationCapabilities(role);
+    const locationIds = capabilities.length > 0
+      ? role?.role === "super_admin"
+        ? locations.map((location) => location.id)
+        : [role?.location_id ?? locations[0]?.id].filter((id): id is string => Boolean(id))
+      : [];
+    return [
+      "abastecimiento:global",
+      `abastecimiento:user:${user.id}`,
+      ...locationIds.flatMap((locationId) => capabilities.map(
+        (capability) => `abastecimiento:location:${locationId}:${capability}`,
+      )),
+    ];
+  }, [locations, role, user]);
+
+  const handleRealtimeInvalidation = useCallback(async (events: AbastecimientoDomainEvent[], reason: "event" | "sync") => {
+    const affected = getRealtimeDomains(reason === "sync" ? [] : events);
+    setRealtimeBatch((current) => ({
+      revision: current.revision + 1,
+      events: mergeLatestRealtimeEvents(current.events, events),
+    }));
+    setRealtimeInvalidations((current) => incrementRealtimeInvalidations(current, affected));
+    if ((reason === "sync" || affected.has("workspace")) && user) {
+      if (!await loadWorkspace(user.id)) throw new Error("No se pudo sincronizar el espacio de trabajo.");
+    } else if (affected.has("requisitions") || affected.has("purchases")) {
+      if (!await refreshWorkflowLists()) throw new Error("No se pudieron sincronizar los flujos de abastecimiento.");
+    }
+  }, [loadWorkspace, refreshWorkflowLists, user]);
+
+  const realtimeStatus = useAbastecimientoRealtime({
+    client: supabase,
+    topics: realtimeTopics,
+    enabled: Boolean(user),
+    onInvalidate: handleRealtimeInvalidation,
+  });
 
   useEffect(() => {
     if (!supabase) {
@@ -912,7 +1021,7 @@ export default function SupplyOsApp() {
   if (loading) return <LoadingScreen />;
   if (!user) return <LoginScreen supabase={supabase} onSignedIn={setUser} />;
 
-  const pendingCount = requisitions.filter((req) => req.status === "pendiente").length;
+  const pendingCount = requisitions.filter((req) => canonicalRequisitionStatus(req.status) === "pendiente").length;
   const navItems = NAV_ITEMS.filter((item) => item.id !== "Ajustes" || role?.role === "super_admin");
 
   return (
@@ -958,6 +1067,11 @@ export default function SupplyOsApp() {
         {dataError ? (
           <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 md:px-7">{dataError}</div>
         ) : null}
+        {realtimeStatus === "error" ? (
+          <div className="border-b border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-800 md:px-7">
+            Reconectando actualizaciones en tiempo real. Los datos se sincronizarán al recuperar la conexión.
+          </div>
+        ) : null}
         <main className="flex-1 overflow-y-auto p-4 md:p-7">
           {view === "Dashboard" && (
             <Dashboard
@@ -976,23 +1090,27 @@ export default function SupplyOsApp() {
               products={products}
               locations={locations}
               requisitions={filterByLocation(requisitions, selectedLocation)}
+              currentUserId={user.id}
               role={role}
               selectedLocation={selectedLocation}
-              reload={() => loadWorkspace(user.id)}
+              reload={async () => { await loadWorkspace(user.id); }}
               categories={categories}
               inventoryAreas={inventoryAreas}
               inventoryDepts={inventoryDepts}
+              realtimeBatch={realtimeBatch}
             />
           )}
-          {view === "Inventario" && <InventoryView supabase={supabase} selectedLocation={selectedLocation} role={role} />}
+          {view === "Inventario" && <InventoryView supabase={supabase} selectedLocation={selectedLocation} role={role} refreshKey={realtimeInvalidations.inventory} />}
           {view === "Catalogo" && <CatalogView products={products} />}
           {view === "Compras" && (
             <PurchasesView
               supabase={supabase}
               purchaseOrders={filterByLocation(purchaseOrders, selectedLocation)}
+              currentUserId={user.id}
               role={role}
-              reload={() => loadWorkspace(user.id)}
+              reload={async () => { await loadWorkspace(user.id); }}
               selectedLocation={selectedLocation}
+              realtimeBatch={realtimeBatch}
             />
           )}
           {view === "Recepciones" && (
@@ -1000,18 +1118,33 @@ export default function SupplyOsApp() {
               supabase={supabase}
               selectedLocation={selectedLocation}
               role={role}
+              refreshKey={realtimeInvalidations.receipts}
+              realtimeBatch={realtimeBatch}
             />
           )}
           {view === "Traspasos" && (
             <SimpleOpsView
+              supabase={supabase}
+              rpc="list_abastecimiento_transfers_v2"
+              refreshKey={realtimeInvalidations.inventory}
+              selectedLocation={selectedLocation}
+              locationKeys={["origen", "destino"]}
               title="Traspasos entre sucursales"
               subtitle="Distribución interna entre sedes y áreas"
-              records={SAMPLE_TRASPASOS.filter((item) => selectedLocation === "Todas" || item.origen === selectedLocation || item.destino === selectedLocation)}
               columns={["folio", "origen", "destino", "insumo", "cantidad", "estado"]}
             />
           )}
           {view === "Merma" && (
-            <SimpleOpsView title="Merma y caducidad" subtitle="Registro y análisis de pérdidas operativas" records={filterSample(SAMPLE_MERMA, selectedLocation, "sucursal")} columns={["folio", "sucursal", "insumo", "cantidad", "tipo", "valor"]} />
+            <SimpleOpsView
+              supabase={supabase}
+              rpc="list_abastecimiento_waste_entries_v2"
+              refreshKey={realtimeInvalidations.inventory}
+              selectedLocation={selectedLocation}
+              locationKeys={["sucursal"]}
+              title="Merma y caducidad"
+              subtitle="Registro y análisis de pérdidas operativas"
+              columns={["folio", "sucursal", "insumo", "cantidad", "tipo", "valor"]}
+            />
           )}
           {view === "Produccion" && (
             <ProductionView
@@ -1019,6 +1152,8 @@ export default function SupplyOsApp() {
               locations={locations}
               selectedLocation={selectedLocation}
               role={role}
+              refreshKey={realtimeInvalidations.production}
+              realtimeBatch={realtimeBatch}
             />
           )}
           {view === "Calidad" && (
@@ -1027,6 +1162,7 @@ export default function SupplyOsApp() {
               locations={locations}
               selectedLocation={selectedLocation}
               role={role}
+              refreshKey={realtimeInvalidations.quality}
             />
           )}
           {view === "MermaPV" && (
@@ -1035,10 +1171,11 @@ export default function SupplyOsApp() {
               locations={locations}
               selectedLocation={selectedLocation}
               role={role}
+              refreshKey={realtimeInvalidations.mermaPv}
             />
           )}
           {view === "Ajustes" && role?.role === "super_admin" && (
-            <SettingsView supabase={supabase} />
+            <SettingsView supabase={supabase} refreshKey={realtimeInvalidations.workspace} />
           )}
         </main>
       </section>
@@ -1136,7 +1273,7 @@ function Dashboard({
   profile: { full_name: string | null; email: string } | null;
 }) {
   const visibleReqs = filterByLocation(requisitions, selectedLocation);
-  const pending = visibleReqs.filter((req) => req.status === "pendiente");
+  const pending = visibleReqs.filter((req) => canonicalRequisitionStatus(req.status) === "pendiente");
   const urgent = visibleReqs.filter((req) => req.request_type === "urgente");
   const now = new Date();
 
@@ -1204,24 +1341,28 @@ function RequisitionsView({
   products,
   locations,
   requisitions,
+  currentUserId,
   role,
   selectedLocation,
   reload,
   categories,
   inventoryAreas,
   inventoryDepts,
+  realtimeBatch,
 }: {
   supabase: ReturnType<typeof createBrowserSupabaseClient>;
   areas: SupplyArea[];
   products: ProductRow[];
   locations: LocationRow[];
   requisitions: SupplyRequisition[];
+  currentUserId: string;
   role: UserRole | null;
   selectedLocation: string;
   reload: () => Promise<void>;
   categories: Array<{ id: string; name: string }>;
   inventoryAreas: InventoryAreaLink[];
   inventoryDepts: InventoryDepartmentLink[];
+  realtimeBatch: RealtimeBatch;
 }) {
   const categoryMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -1243,8 +1384,8 @@ function RequisitionsView({
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const canManageStatus = role?.role === "super_admin" || role?.role === "branch_admin";
-  const filtered = requisitions.filter((req) => filter === "todas" || req.status === filter || req.request_type === filter);
+  const canManageStatus = role?.role === "super_admin" || role?.role === "branch_admin" || normalize(role?.department ?? "") === "compras";
+  const filtered = requisitions.filter((req) => filter === "todas" || canonicalRequisitionStatus(req.status) === filter || req.request_type === filter);
   const allFilteredSelected = filtered.length > 0 && filtered.every((req) => selectedIds.includes(req.id));
 
   async function fetchDetail(requisitionId: string) {
@@ -1344,7 +1485,7 @@ function RequisitionsView({
           <Button onClick={() => setOpen(true)}>+ Nueva Requi</Button>
         </div>
       </div>
-      <Segmented value={filter} onChange={setFilter} options={[["todas", "Todas"], ["pendiente", "Pendientes"], ["urgente", "Urgentes"], ["revisada", "Revisadas"], ["aprobada", "Aprobadas"], ["cancelada", "Canceladas"]]} />
+      <Segmented value={filter} onChange={setFilter} options={[["todas", "Todas"], ["pendiente", "Pendientes"], ["urgente", "Urgentes"], ["revisando_compras", "En revisión"], ["aprobada_compras", "Aprobadas"], ["cancelada_compras", "Canceladas"], ["completado", "Completadas"]]} />
       {detailError ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{detailError}</p> : null}
       <Card className="mt-5 p-0">
         <div className="overflow-x-auto">
@@ -1405,14 +1546,20 @@ function RequisitionsView({
       {open ? <NewRequisitionModal supabase={supabase} selectedLocation={selectedLocation} locations={locations} areas={areas} products={filteredProducts} role={role} onClose={() => setOpen(false)} onCreated={async () => { setOpen(false); await reload(); }} /> : null}
       {detail ? (
         <RequisitionDetailModal
-          key={`${detail.id}-${detail.updated_at}-${detail.status}`}
+          key={`${detail.id}-${detail.version ?? detail.updated_at}-${detail.status}`}
           supabase={supabase}
           detail={detail}
+          currentUserId={currentUserId}
           areas={areas}
           products={filteredProducts}
           locations={locations}
           role={role}
           canManageStatus={canManageStatus}
+          externalChange={
+            hasNewerAggregateEvent(realtimeBatch, ["requisition"], [detail.id], detail.version) ||
+            hasNewerVersion(requisitions.find((row) => row.id === detail.id)?.version, detail.version)
+          }
+          onReload={async () => setDetail(await fetchDetail(detail.id))}
           onClose={() => setDetail(null)}
           onUpdated={async (updatedDetail) => {
             setDetail(updatedDetail);
@@ -1427,21 +1574,27 @@ function RequisitionsView({
 function RequisitionDetailModal({
   supabase,
   detail,
+  currentUserId,
   areas,
   products,
   locations,
   role,
   canManageStatus,
+  externalChange,
+  onReload,
   onClose,
   onUpdated,
 }: {
   supabase: ReturnType<typeof createBrowserSupabaseClient>;
   detail: SupplyRequisitionDetail;
+  currentUserId: string;
   areas: SupplyArea[];
   products: ProductRow[];
   locations: LocationRow[];
   role: UserRole | null;
   canManageStatus: boolean;
+  externalChange: boolean;
+  onReload: () => Promise<void>;
   onClose: () => void;
   onUpdated: (detail: SupplyRequisitionDetail) => Promise<void>;
 }) {
@@ -1451,8 +1604,8 @@ function RequisitionDetailModal({
   const [requestType, setRequestType] = useState<RequisitionRequestType>(detail.request_type);
   const [neededBy, setNeededBy] = useState(detail.needed_by ?? "");
   const [notes, setNotes] = useState(detail.notes ?? "");
-  const [revisionNote, setRevisionNote] = useState(detail.revision_note ?? "");
-  const [statusDraft, setStatusDraft] = useState<RequisitionStatus>(detail.status);
+  const revisionNote = detail.revision_note ?? "";
+  const [statusDraft, setStatusDraft] = useState<RequisitionWorkflowStatus>(canonicalRequisitionStatus(detail.status));
   const [items, setItems] = useState<RequisitionDraftItem[]>(() => detail.items.map((item) => detailItemToDraftItem(item, productMap.get(item.product_id))));
   const [draftProductId, setDraftProductId] = useState("");
   const [draftQuantity, setDraftQuantity] = useState("");
@@ -1461,14 +1614,28 @@ function RequisitionDetailModal({
   const [statusSaving, setStatusSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const nextClientId = useRef(0);
+  const commandIds = useRef(new Map<string, string>());
   const availableProducts = products.filter((product) => productIsAvailableForLocation(product, locationId));
   const selectedDraftProduct = availableProducts.find((product) => product.id === draftProductId);
   const locationAreas = areas.filter((area) => area.location_id === locationId);
-  const canEditContent = detail.status === "pendiente" || detail.status === "urgente" || detail.status === "revisada";
-  const statusLocked = detail.status === "cancelada";
+  const workflowStatus = canonicalRequisitionStatus(detail.status);
+  const canEditContent = workflowStatus === "pendiente" && !externalChange && (
+    detail.requested_by === currentUserId ||
+    role?.role === "super_admin" ||
+    role?.role === "branch_admin" ||
+    normalize(role?.department ?? "") === "produccion"
+  );
+  const statusLocked = workflowStatus === "aprobada_compras" || workflowStatus === "cancelada_compras" || workflowStatus === "completado" || externalChange;
   const isBranchOrSuperAdmin = role?.role === "branch_admin" || role?.role === "super_admin";
-  const canEditSelections = isBranchOrSuperAdmin && (detail.status === "pendiente" || detail.status === "urgente" || detail.status === "revisada");
+  const canEditSelections = canManageStatus && workflowStatus === "revisando_compras" && !externalChange;
+  const reviewDirty = canEditSelections && items.some((item) => {
+    const persisted = detail.items.find((savedItem) => savedItem.id === item.itemId);
+    return !persisted
+      || (item.selected !== false) !== persisted.selected
+      || (item.revision_note?.trim() || "") !== (persisted.revision_note?.trim() || "");
+  });
   const canAddItem = Boolean(canEditContent && selectedDraftProduct && Number(draftQuantity) > 0);
+  const statusOptions = getRequisitionStatusOptions(workflowStatus);
 
   const selectedTotalMoney = useMemo(() => {
     return items.reduce((sum, item) => {
@@ -1520,7 +1687,7 @@ function RequisitionDetailModal({
   }
 
   async function saveContent() {
-    if (!supabase || !canEditContent) return;
+    if (!supabase || !canEditContent || saving || statusSaving) return;
     if (items.length === 0 || items.some((item) => Number(item.quantity) <= 0)) {
       setError("Cada requisición necesita al menos un producto con cantidad válida.");
       return;
@@ -1528,7 +1695,9 @@ function RequisitionDetailModal({
 
     setSaving(true);
     setError(null);
-    const { data, error: saveError } = await supabase.rpc("update_abastecimiento_requisition", {
+    const commandKey = `${detail.id}:${detail.version ?? 1}:edit-content`;
+    const commandId = getCommandId(commandIds.current, commandKey);
+    const payload = {
       p_area_id: areaId || null,
       p_items: items.map((item) => ({
         product_id: item.productId,
@@ -1544,33 +1713,88 @@ function RequisitionDetailModal({
       p_request_type: requestType,
       p_requisition_id: detail.id,
       p_revision_note: revisionNote || null,
+    };
+    const result = await supabase.rpc("update_abastecimiento_requisition_v2", {
+      ...payload,
+      p_command_id: commandId,
+      p_expected_version: detail.version ?? 1,
     });
     setSaving(false);
 
-    if (saveError) {
-      setError(saveError.message);
+    if (result.error) {
+      setError(result.error.message);
       return;
     }
 
-    await onUpdated(data as SupplyRequisitionDetail);
+    commandIds.current.delete(commandKey);
+    await onUpdated(result.data as SupplyRequisitionDetail);
+  }
+
+  async function saveReview() {
+    if (!supabase || !canEditSelections || saving || statusSaving) return;
+    if (items.some((item) => !item.itemId) || !items.some((item) => item.selected !== false)) {
+      setError("La revisión debe incluir todas las partidas y conservar al menos una seleccionada.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    const commandKey = `${detail.id}:${detail.version ?? 1}:review-items`;
+    const commandId = getCommandId(commandIds.current, commandKey);
+    const result = await supabase.rpc("review_abastecimiento_requisition_items_v2", {
+      p_command_id: commandId,
+      p_expected_version: detail.version ?? 1,
+      p_items: items.map((item) => ({
+        item_id: item.itemId,
+        revision_note: item.revision_note?.trim() || null,
+        selected: item.selected !== false,
+      })),
+      p_requisition_id: detail.id,
+    });
+    setSaving(false);
+
+    if (result.error) {
+      setError(result.error.message);
+      return;
+    }
+
+    commandIds.current.delete(commandKey);
+    await onUpdated(result.data as SupplyRequisitionDetail);
   }
 
   async function saveStatus() {
-    if (!supabase || !canManageStatus || statusLocked || statusDraft === detail.status) return;
+    if (!supabase || !canManageStatus || statusLocked || saving || statusSaving || statusDraft === workflowStatus) return;
+    if (statusDraft === "aprobada_compras" && reviewDirty) {
+      setError("Guarda la revisión de partidas antes de aprobar la requisición.");
+      return;
+    }
+    const reason = statusDraft === "cancelada_compras"
+      ? globalThis.prompt("Motivo de cancelación de la requisición:")?.trim()
+      : "";
+    if (statusDraft === "cancelada_compras" && !reason) {
+      setError("La cancelación requiere un motivo.");
+      return;
+    }
     setStatusSaving(true);
     setError(null);
-    const { data, error: statusError } = await supabase.rpc("update_abastecimiento_requisition_status", {
+    const commandKey = `${detail.id}:${detail.version ?? 1}:${statusDraft}`;
+    const commandId = getCommandId(commandIds.current, commandKey);
+    const result = await supabase.rpc("update_abastecimiento_requisition_status_v2", {
+      p_command_id: commandId,
+      p_expected_version: detail.version ?? 1,
+      p_reason: reason || null,
       p_requisition_id: detail.id,
       p_status: statusDraft,
     });
     setStatusSaving(false);
 
-    if (statusError) {
-      setError(statusError.message);
+    if (result.error) {
+      setError(result.error.message);
       return;
     }
 
-    await onUpdated(data as SupplyRequisitionDetail);
+    commandIds.current.delete(commandKey);
+    await onUpdated(result.data as SupplyRequisitionDetail);
   }
 
   return (
@@ -1609,20 +1833,35 @@ function RequisitionDetailModal({
       {canManageStatus ? (
         <div className="mt-4 grid items-end gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 md:grid-cols-[1fr_auto]">
           <Field label="Estado">
-            <select disabled={statusLocked} value={statusDraft} onChange={(event) => setStatusDraft(event.target.value as RequisitionStatus)} className="field-input disabled:opacity-70">
-              {REQUISITION_STATUS_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            <select disabled={statusLocked || saving || statusSaving} value={statusDraft} onChange={(event) => setStatusDraft(event.target.value as RequisitionWorkflowStatus)} className="field-input disabled:opacity-70">
+              {statusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
           </Field>
-          <Button disabled={statusLocked || statusDraft === detail.status || statusSaving} onClick={saveStatus}>{statusSaving ? "Actualizando..." : "Actualizar estado"}</Button>
+          <Button disabled={statusLocked || saving || statusDraft === workflowStatus || statusSaving || (statusDraft === "aprobada_compras" && reviewDirty)} onClick={saveStatus}>{statusSaving ? "Actualizando..." : "Actualizar estado"}</Button>
         </div>
       ) : null}
 
-      {statusLocked ? (
-        <p className="mt-4 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700">La requisición cancelada queda bloqueada por completo.</p>
+      {statusDraft === "aprobada_compras" && reviewDirty ? (
+        <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">Guarda la revisión de partidas antes de aprobar.</p>
       ) : null}
 
-      {!canEditContent ? (
-        <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">La requisición ya está aprobada o cancelada; el contenido y selección quedan bloqueados.</p>
+      {externalChange ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800">
+          <span>Esta requisición cambió en otra sesión. Recarga antes de guardar.</span>
+          <Button variant="secondary" onClick={() => void onReload()}>Recargar datos</Button>
+        </div>
+      ) : null}
+
+      {workflowStatus === "cancelada_compras" ? (
+        <p className="mt-4 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700">La requisición cancelada queda bloqueada por completo.{detail.cancelled_reason ? ` Motivo: ${detail.cancelled_reason}` : ""}</p>
+      ) : workflowStatus === "aprobada_compras" ? (
+        <p className="mt-4 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700">La requisición aprobada por Compras queda bloqueada y continúa al flujo de autorización.</p>
+      ) : workflowStatus === "completado" ? (
+        <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">La requisición se completó al ingresar la mercancía al almacén.</p>
+      ) : null}
+
+      {!canEditContent && !externalChange ? (
+        <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">La requisición sólo se puede editar mientras está pendiente.</p>
       ) : null}
 
       <div className="mt-4 grid gap-4 lg:grid-cols-4">
@@ -1743,14 +1982,12 @@ function RequisitionDetailModal({
         <Field label="Notas generales">
           <textarea disabled={!canEditContent} value={notes} onChange={(event) => setNotes(event.target.value)} className="field-input min-h-20 resize-y disabled:opacity-70" placeholder="Opcional" />
         </Field>
-        {isBranchOrSuperAdmin ? (
+        {isBranchOrSuperAdmin && revisionNote ? (
           <Field label="Nota de revisión general">
             <textarea
-              disabled={!canEditSelections}
+              disabled
               value={revisionNote}
-              onChange={(event) => setRevisionNote(event.target.value)}
               className="field-input min-h-20 resize-y border-amber-300 bg-amber-50/20 focus:border-amber-500 focus:ring-amber-500 disabled:opacity-75"
-              placeholder="Ej. Explicación general de por qué no se seleccionaron todas las partidas..."
             />
           </Field>
         ) : null}
@@ -1759,7 +1996,8 @@ function RequisitionDetailModal({
       {error ? <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
       <div className="mt-6 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose}>Cerrar</Button>
-        {canEditContent ? <Button disabled={saving} onClick={saveContent}>{saving ? "Guardando..." : "Guardar cambios"}</Button> : null}
+        {canEditContent ? <Button disabled={saving || statusSaving} onClick={saveContent}>{saving ? "Guardando..." : "Guardar cambios"}</Button> : null}
+        {canEditSelections ? <Button disabled={saving || statusSaving} onClick={saveReview}>{saving ? "Guardando..." : "Guardar revisión"}</Button> : null}
       </div>
     </Modal>
   );
@@ -1817,6 +2055,7 @@ function NewRequisitionModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const nextClientId = useRef(0);
+  const commandId = useRef(globalThis.crypto.randomUUID());
   const deferredProductSearch = useDeferredValue(productSearch);
   const availableProducts = products.filter((product) => productIsAvailableForLocation(product, locationId));
   const selectedProduct = availableProducts.find((product) => product.id === draftProductId);
@@ -1863,7 +2102,7 @@ function NewRequisitionModal({
     if (!supabase || items.length === 0) return;
     setSaving(true);
     setError(null);
-    const { error: createError } = await supabase.rpc("create_abastecimiento_requisition", {
+    const payload = {
       p_area_id: areaId || null,
       p_items: items.map((item) => ({
         product_id: item.productId,
@@ -1875,10 +2114,14 @@ function NewRequisitionModal({
       p_needed_by: neededBy || null,
       p_notes: notes,
       p_request_type: requestType,
+    };
+    const result = await supabase.rpc("create_abastecimiento_requisition_v2", {
+      ...payload,
+      p_command_id: commandId.current,
     });
     setSaving(false);
-    if (createError) {
-      setError(createError.message);
+    if (result.error) {
+      setError(result.error.message);
       return;
     }
     await onCreated();
@@ -2941,10 +3184,12 @@ function InventoryView({
   supabase,
   selectedLocation,
   role,
+  refreshKey,
 }: {
   supabase: ReturnType<typeof createBrowserSupabaseClient>;
   selectedLocation: string;
   role: UserRole | null;
+  refreshKey: number;
 }) {
   const [activeTab, setActiveTab] = useState<"almacen" | "consumos">("almacen");
   const [searchQuery, setSearchQuery] = useState("");
@@ -3022,7 +3267,7 @@ function InventoryView({
       void loadConsumptions();
     }, 0);
     return () => window.clearTimeout(timeoutId);
-  }, [loadRows, loadConsumptions]);
+  }, [loadRows, loadConsumptions, refreshKey]);
 
   const inspectLotConsumption = async (lotId: string) => {
     if (!supabase || lotDetailLoading) return;
@@ -3546,36 +3791,38 @@ function InventoryView({
 function PurchasesView({
   supabase,
   purchaseOrders,
+  currentUserId,
   role,
   reload,
   selectedLocation,
+  realtimeBatch,
 }: {
   supabase: ReturnType<typeof createBrowserSupabaseClient>;
   purchaseOrders: PurchaseOrderRow[];
+  currentUserId: string;
   role: UserRole | null;
   reload: () => Promise<void>;
   selectedLocation: string;
+  realtimeBatch: RealtimeBatch;
 }) {
-  const [filter, setFilter] = useState<PurchaseOrderStatus | "todas">("pendiente");
+  const [filter, setFilter] = useState<PurchaseOrderWorkflowStatus | "todas">("revisando_gerencia");
   const [loadingId, setLoadingId] = useState<string | null>(null);
-  const [statusLoadingId, setStatusLoadingId] = useState<string | null>(null);
-  const [statusDrafts, setStatusDrafts] = useState<Record<string, PurchaseOrderStatus>>({});
+  const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null);
+  const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<PurchaseOrderDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const canManagePurchases = role?.role === "super_admin" || role?.role === "branch_admin" || normalize(role?.department ?? "") === "contabilidad";
+  const commandIds = useRef(new Map<string, string>());
+  const permissions = getPurchasePermissions(role);
+  const canManagePurchases = permissions.accounting || permissions.management || permissions.purchasing;
   const visible = purchaseOrders.filter((order) => {
-    if (order.status === "completado") return false;
     if (filter === "todas") return true;
-    return order.status === filter;
+    return canonicalPurchaseOrderStatus(order.status) === filter;
   });
-  const pending = purchaseOrders.filter((order) => order.status === "pendiente");
-  const urgent = purchaseOrders.filter((order) => order.status === "urgente");
-  const approved = purchaseOrders.filter((order) => order.status === "aprobado");
-  const cancelled = purchaseOrders.filter((order) => order.status === "cancelado");
+  const reviewing = purchaseOrders.filter((order) => canonicalPurchaseOrderStatus(order.status) === "revisando_gerencia");
+  const urgent = purchaseOrders.filter((order) => order.request_type === "urgente");
+  const approved = purchaseOrders.filter((order) => canonicalPurchaseOrderStatus(order.status) === "aprobado");
+  const rejected = purchaseOrders.filter((order) => canonicalPurchaseOrderStatus(order.status) === "rechazado");
   const visibleTotal = visible.reduce((sum, order) => sum + Number(order.estimated_total ?? 0), 0);
-
-  function getDraftStatus(order: PurchaseOrderRow) {
-    return statusDrafts[order.id] ?? order.status;
-  }
 
   async function fetchDetail(purchaseOrderId: string) {
     if (!supabase) throw new Error("Supabase no está configurado.");
@@ -3584,28 +3831,54 @@ function PurchasesView({
     return data as PurchaseOrderDetail;
   }
 
-  async function updateStatus(order: PurchaseOrderRow) {
-    const nextStatus = getDraftStatus(order);
-    if (!supabase || !canManagePurchases || nextStatus === order.status) return;
-    setStatusLoadingId(order.id);
+  async function openDetail(purchaseOrderId: string) {
+    setDetailLoadingId(purchaseOrderId);
     setError(null);
     try {
-      const { error: statusError } = await supabase.rpc("update_abastecimiento_purchase_order_status", {
-        p_purchase_order_id: order.id,
-        p_status: nextStatus,
-      });
-      if (statusError) throw statusError;
-      setStatusDrafts((current) => {
-        const next = { ...current };
-        delete next[order.id];
-        return next;
-      });
-      await reload();
+      setDetail(await fetchDetail(purchaseOrderId));
     } catch (purchaseError) {
       setError(getErrorMessage(purchaseError));
     } finally {
-      setStatusLoadingId(null);
+      setDetailLoadingId(null);
     }
+  }
+
+  async function runAction(order: PurchaseOrderRow, action: PurchaseOrderAction) {
+    if (!supabase || !canManagePurchases || actionLoadingKey) return false;
+    const reasonRequired = action === "rechazar" || action === "cancelar";
+    const reason = reasonRequired
+      ? globalThis.prompt(action === "rechazar" ? "Motivo del rechazo:" : "Motivo de cancelación:")?.trim()
+      : "";
+    if (reasonRequired && !reason) {
+      setError("La acción requiere un motivo.");
+      return false;
+    }
+
+    const loadingKey = `${order.id}:${action}`;
+    const commandKey = `${order.id}:${order.version ?? 1}:${action}`;
+    setActionLoadingKey(loadingKey);
+    setError(null);
+    const commandId = getCommandId(commandIds.current, commandKey);
+    const result = await supabase.rpc("update_abastecimiento_purchase_order_status_v2", {
+      p_action: action,
+      p_command_id: commandId,
+      p_expected_version: order.version ?? 1,
+      p_purchase_order_id: order.id,
+      p_reason: reason || null,
+    });
+    setActionLoadingKey(null);
+
+    if (result.error) {
+      setError(result.error.message);
+      return false;
+    }
+
+    commandIds.current.delete(commandKey);
+    if (detail?.id === order.id) {
+      setDetail(result.data as PurchaseOrderDetail);
+    }
+    await reload();
+    return true;
   }
 
   async function generatePurchaseOrder(purchaseOrderId: string) {
@@ -3613,7 +3886,7 @@ function PurchasesView({
     setError(null);
     try {
       const detail = await fetchDetail(purchaseOrderId);
-      if (detail.status !== "aprobado" && detail.status !== "completado") {
+      if (!["aprobado", "completado"].includes(canonicalPurchaseOrderStatus(detail.status))) {
         throw new Error("Solo las compras aprobadas o completadas pueden generar orden de compra.");
       }
       await downloadPurchaseOrderPdf(detail);
@@ -3628,13 +3901,13 @@ function PurchasesView({
     <div>
       <PageHeader title="Compras y órdenes" subtitle={`Evaluación financiera · ${selectedLocation}`} />
       <div className="mb-6 mt-6 grid gap-3 md:grid-cols-5">
-        <KpiCard label="Pendientes" value={pending.length} sub="por evaluar" accent />
+        <KpiCard label="En revisión" value={reviewing.length} sub="Contabilidad y Gerencia" accent />
         <KpiCard label="Urgentes" value={urgent.length} sub="prioridad de compra" alert={urgent.length > 0} />
         <KpiCard label="Aprobadas" value={approved.length} sub="con fondos" />
-        <KpiCard label="Canceladas" value={cancelled.length} sub="anuladas" />
+        <KpiCard label="Rechazadas" value={rejected.length} sub="editables por Compras" alert={rejected.length > 0} />
         <KpiCard label="Valor filtrado" value={formatCurrency(visibleTotal)} sub="cantidad x precio total" />
       </div>
-      <Segmented value={filter} onChange={(value) => setFilter(value as PurchaseOrderStatus | "todas")} options={[["todas", "Todas"], ["pendiente", "Pendientes"], ["urgente", "Urgentes"], ["aprobado", "Aprobadas"], ["cancelado", "Canceladas"]]} />
+      <Segmented value={filter} onChange={(value) => setFilter(value as PurchaseOrderWorkflowStatus | "todas")} options={[["todas", "Todas"], ...PURCHASE_ORDER_STATUS_OPTIONS]} />
       {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
       <Card className="mt-5 p-0">
         <div className="overflow-x-auto">
@@ -3648,8 +3921,8 @@ function PurchasesView({
             </thead>
             <tbody>
               {visible.map((order) => {
-                const draftStatus = getDraftStatus(order);
-                const canDownload = order.status === "aprobado" || order.status === "completado";
+                const canDownload = ["aprobado", "completado"].includes(canonicalPurchaseOrderStatus(order.status));
+                const actions = getPurchaseOrderActions(order, permissions, currentUserId);
                 return (
                   <tr key={order.id} className="border-b border-[#F5F1EE] transition hover:bg-[#FAFAF7]">
                     <td className="whitespace-nowrap px-4 py-3 font-bold text-[#B45309]">{order.folio}</td>
@@ -3662,26 +3935,20 @@ function PurchasesView({
                     <td className="whitespace-nowrap px-4 py-3"><Badge status={order.status} /></td>
                     <td className="whitespace-nowrap px-4 py-3">
                       <div className="flex flex-wrap items-center gap-2">
-                        {canManagePurchases ? (
-                          <>
-                            <select
-                              value={draftStatus}
-                              onChange={(event) => setStatusDrafts((current) => ({ ...current, [order.id]: event.target.value as PurchaseOrderStatus }))}
-                              disabled={statusLoadingId === order.id}
-                              className="field-input h-9 min-w-[130px] bg-white text-xs disabled:opacity-70"
-                            >
-                              {PURCHASE_ORDER_STATUS_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                            </select>
-                            <button
-                              type="button"
-                              disabled={draftStatus === order.status || statusLoadingId === order.id}
-                              onClick={() => void updateStatus(order)}
-                              className="rounded-lg border border-[#DDD7D1] px-3 py-1.5 text-xs font-bold text-stone-700 transition hover:bg-[#F5F1EE] disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              {statusLoadingId === order.id ? "Guardando..." : "Guardar"}
-                            </button>
-                          </>
-                        ) : null}
+                        <button type="button" onClick={() => void openDetail(order.id)} className="rounded-lg border border-[#DDD7D1] px-3 py-1.5 text-xs font-bold text-stone-700 transition hover:bg-[#F5F1EE]">
+                          {detailLoadingId === order.id ? "Abriendo..." : canonicalPurchaseOrderStatus(order.status) === "rechazado" && permissions.purchasing ? "Editar" : "Ver"}
+                        </button>
+                        {actions.map(([action, label]) => (
+                          <button
+                            key={action}
+                            type="button"
+                            disabled={Boolean(actionLoadingKey)}
+                            onClick={() => void runAction(order, action)}
+                            className="rounded-lg border border-[#DDD7D1] px-3 py-1.5 text-xs font-bold text-stone-700 transition hover:bg-[#F5F1EE] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {actionLoadingKey === `${order.id}:${action}` ? "Guardando..." : label}
+                          </button>
+                        ))}
                         <button
                           type="button"
                           disabled={!canDownload || loadingId === order.id}
@@ -3701,7 +3968,189 @@ function PurchasesView({
         </div>
         {visible.length === 0 ? <EmptyState message="No hay órdenes de compra en este filtro" /> : null}
       </Card>
+      {detail ? (
+        <PurchaseOrderDetailModal
+          key={`${detail.id}-${detail.version ?? detail.updated_at}-${detail.status}`}
+          supabase={supabase}
+          detail={detail}
+          currentUserId={currentUserId}
+          permissions={permissions}
+          externalChange={
+            hasNewerAggregateEvent(realtimeBatch, ["purchase_order"], [detail.id], detail.version) ||
+            hasNewerVersion(purchaseOrders.find((row) => row.id === detail.id)?.version, detail.version)
+          }
+          actionLoadingKey={actionLoadingKey}
+          onAction={runAction}
+          onClose={() => setDetail(null)}
+          onReload={() => openDetail(detail.id)}
+          onUpdated={async (updated) => {
+            setDetail(updated);
+            await reload();
+          }}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function PurchaseOrderDetailModal({
+  supabase,
+  detail,
+  currentUserId,
+  permissions,
+  externalChange,
+  actionLoadingKey,
+  onAction,
+  onClose,
+  onReload,
+  onUpdated,
+}: {
+  supabase: ReturnType<typeof createBrowserSupabaseClient>;
+  detail: PurchaseOrderDetail;
+  currentUserId: string;
+  permissions: PurchasePermissions;
+  externalChange: boolean;
+  actionLoadingKey: string | null;
+  onAction: (order: PurchaseOrderRow, action: PurchaseOrderAction) => Promise<boolean>;
+  onClose: () => void;
+  onReload: () => Promise<void>;
+  onUpdated: (detail: PurchaseOrderDetail) => Promise<void>;
+}) {
+  const [notes, setNotes] = useState(detail.notes ?? "");
+  const [items, setItems] = useState(() => detail.items.map((item) => ({
+    ...item,
+    quantity: String(item.quantity ?? ""),
+    unit_price: String(item.unit_cost ?? item.unit_price ?? 0),
+  })));
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const commandIds = useRef(new Map<string, string>());
+  const status = canonicalPurchaseOrderStatus(detail.status);
+  const canEdit = status === "rechazado" && permissions.purchasing && !externalChange;
+  const total = items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_price || 0), 0);
+  const actions = getPurchaseOrderActions(detail, permissions, currentUserId);
+
+  function updateItem(itemId: string, changes: { quantity?: string; unit_price?: string }) {
+    setDirty(true);
+    setItems((current) => current.map((item) => item.id === itemId ? { ...item, ...changes } : item));
+  }
+
+  async function saveChanges() {
+    if (!supabase || !canEdit || saving || actionLoadingKey) return null;
+    if (items.some((item) => Number(item.quantity) <= 0 || Number(item.unit_price) < 0)) {
+      setError("Todas las partidas requieren cantidad positiva y costo no negativo.");
+      return null;
+    }
+
+    setSaving(true);
+    setError(null);
+    const commandKey = `${detail.id}:${detail.version ?? 1}:edit`;
+    const commandId = getCommandId(commandIds.current, commandKey);
+    const result = await supabase.rpc("update_abastecimiento_purchase_order_v2", {
+      p_command_id: commandId,
+      p_expected_version: detail.version ?? 1,
+      p_items: items.map((item) => ({
+        purchase_order_item_id: item.id,
+        quantity: Number(item.quantity),
+        unit_cost: Number(item.unit_price),
+      })),
+      p_notes: notes.trim() || null,
+      p_purchase_order_id: detail.id,
+    });
+    setSaving(false);
+
+    if (result.error) {
+      setError(result.error.message);
+      return null;
+    }
+
+    commandIds.current.delete(commandKey);
+    setDirty(false);
+    const updated = result.data as PurchaseOrderDetail;
+    await onUpdated(updated);
+    return updated;
+  }
+
+  async function saveAndResubmit() {
+    const order = dirty ? await saveChanges() : detail;
+    if (order) await onAction(order, "reenviar");
+  }
+
+  return (
+    <Modal title={`Orden de compra ${detail.folio}`} onClose={onClose} maxWidthClass="max-w-6xl">
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge status={detail.status} />
+            <Badge status={detail.request_type} />
+          </div>
+          <p className="mt-2 text-sm font-semibold text-stone-500">Requisición {detail.requisition_folio} · {detail.location_name} · ciclo {detail.review_cycle ?? 1}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={onClose}>Cerrar</Button>
+          {status === "rechazado" && permissions.purchasing ? (
+            <Button disabled={saving || Boolean(actionLoadingKey) || externalChange} onClick={() => void saveAndResubmit()}>{saving ? "Guardando..." : "Guardar y reenviar"}</Button>
+          ) : null}
+          {actions.map(([action, label]) => (
+            <Button key={action} disabled={Boolean(actionLoadingKey) || externalChange} onClick={() => void onAction(detail, action)}>
+              {actionLoadingKey === `${detail.id}:${action}` ? "Guardando..." : label}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 rounded-xl bg-[#FAFAF8] p-4 md:grid-cols-4">
+        <KpiMini label="Partidas" value={items.length} />
+        <KpiMini label="Total" value={formatCurrency(total)} />
+        <KpiMini label="Contabilidad" value={detail.accounting_approved_by_name ?? (detail.accounting_approved_at ? "Aprobada" : ["aprobado", "completado"].includes(status) ? "Aprobación heredada" : "Pendiente")} />
+        <KpiMini label="Gerencia" value={detail.management_approved_by_name ?? (detail.management_approved_at ? "Aprobada" : ["aprobado", "completado"].includes(status) ? "Aprobación heredada" : "Pendiente")} />
+      </div>
+
+      {detail.rejected_reason ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">Motivo de rechazo: {detail.rejected_reason}</p> : null}
+      {detail.cancelled_reason ? <p className="mt-4 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700">Motivo de cancelación: {detail.cancelled_reason}</p> : null}
+      {externalChange ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800">
+          <span>Esta orden cambió en otra sesión. Recarga antes de continuar.</span>
+          <Button variant="secondary" onClick={() => void onReload()}>Recargar datos</Button>
+        </div>
+      ) : null}
+      {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
+
+      <div className="mt-4 overflow-x-auto rounded-xl border border-[#EDE8E3] bg-white">
+        <table className="w-full border-collapse text-left text-sm">
+          <thead>
+            <tr className="border-b border-[#EDE8E3]">
+              {["Producto", "Proveedor", "Unidad", "Cantidad", "Costo unitario", "Subtotal"].map((label) => (
+                <th key={label} className="whitespace-nowrap px-4 py-3 text-[11px] font-bold uppercase tracking-[0.06em] text-stone-400">{label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={item.id} className="border-b border-[#F5F1EE]">
+                <td className="min-w-[260px] px-4 py-3 font-bold text-stone-950">{item.product}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-stone-700">{item.supplier_name ?? "Sin proveedor"}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-stone-700">{item.unit ?? "—"}</td>
+                <td className="whitespace-nowrap px-4 py-3">
+                  <input disabled={!canEdit} value={item.quantity} onChange={(event) => updateItem(item.id, { quantity: event.target.value })} type="number" min="0.001" step="0.001" className="field-input h-9 w-28 disabled:opacity-70" />
+                </td>
+                <td className="whitespace-nowrap px-4 py-3">
+                  <input disabled={!canEdit} value={item.unit_price ?? ""} onChange={(event) => updateItem(item.id, { unit_price: event.target.value })} type="number" min="0" step="0.01" className="field-input h-9 w-32 disabled:opacity-70" />
+                </td>
+                <td className="whitespace-nowrap px-4 py-3 font-bold text-stone-950">{formatCurrency(Number(item.quantity) * Number(item.unit_price))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-4">
+        <Field label="Notas de la orden">
+          <textarea disabled={!canEdit} value={notes} onChange={(event) => { setNotes(event.target.value); setDirty(true); }} className="field-input min-h-20 resize-y disabled:opacity-70" />
+        </Field>
+      </div>
+    </Modal>
   );
 }
 
@@ -3709,10 +4158,14 @@ function ReceiptsView({
   supabase,
   selectedLocation,
   role,
+  refreshKey,
+  realtimeBatch,
 }: {
   supabase: ReturnType<typeof createBrowserSupabaseClient>;
   selectedLocation: string;
   role: UserRole | null;
+  refreshKey: number;
+  realtimeBatch: RealtimeBatch;
 }) {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -3723,12 +4176,13 @@ function ReceiptsView({
   const [storagePdfLoadingId, setStoragePdfLoadingId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ReceivingOrderDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const canManageReceipts = canManageReceiving(role);
 
   const loadRows = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
     setError(null);
-    const { data, error: loadError } = await supabase.rpc("list_abastecimiento_receiving_orders", {
+    const { data, error: loadError } = await listAbastecimientoReceivingOrders(supabase, {
       p_date_from: dateFrom || null,
       p_date_to: dateTo || null,
     });
@@ -3754,7 +4208,7 @@ function ReceiptsView({
       void loadRows();
     }, 0);
     return () => window.clearTimeout(timeoutId);
-  }, [loadRows]);
+  }, [loadRows, refreshKey]);
 
   const scopedRows = filterByLocation(rows, selectedLocation);
   const visible = scopedRows.filter((row) => filter === "todas" || row.status === filter);
@@ -3871,7 +4325,7 @@ function ReceiptsView({
                         </button>
                       ) : null}
                       <button type="button" onClick={() => void openDetail(row.purchase_order_id)} className="rounded-lg bg-[#1C1917] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#2D2926]">
-                        {detailLoadingId === row.purchase_order_id ? "Abriendo..." : row.status === "pendiente" ? "Recibir" : "Ver"}
+                        {detailLoadingId === row.purchase_order_id ? "Abriendo..." : row.status === "pendiente" && canManageReceipts ? "Recibir" : "Ver"}
                       </button>
                     </div>
                   </td>
@@ -3888,6 +4342,17 @@ function ReceiptsView({
         <ReceivingDetailModal
           supabase={supabase}
           detail={detail}
+          canManage={canManageReceipts}
+          externalChange={hasNewerAggregateEvent(
+            realtimeBatch,
+            ["receipt"],
+            [detail.receipt_id, detail.purchase_order_id],
+            detail.version,
+          ) || hasNewerVersion(
+            rows.find((row) => row.purchase_order_id === detail.purchase_order_id)?.version,
+            detail.version,
+          )}
+          onReload={() => openDetail(detail.purchase_order_id)}
           onClose={() => setDetail(null)}
           onSaved={async (updatedDetail) => {
             setDetail(updatedDetail);
@@ -3902,11 +4367,17 @@ function ReceiptsView({
 function ReceivingDetailModal({
   supabase,
   detail,
+  canManage,
+  externalChange,
+  onReload,
   onClose,
   onSaved,
 }: {
   supabase: ReturnType<typeof createBrowserSupabaseClient>;
   detail: ReceivingOrderDetail;
+  canManage: boolean;
+  externalChange: boolean;
+  onReload: () => Promise<void>;
   onClose: () => void;
   onSaved: (detail: ReceivingOrderDetail) => Promise<void>;
 }) {
@@ -3916,7 +4387,9 @@ function ReceivingDetailModal({
   const [saving, setSaving] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const locked = detail.status === "en_almacen";
+  const commandIds = useRef(new Map<string, string>());
+  const locked = !canManage || detail.status === "en_almacen" || externalChange;
+  const statusOptions = getReceivingStatusOptions(detail.status);
   const totalPurchased = items.reduce((sum, item) => sum + Number(item.purchased_quantity ?? 0), 0);
   const totalReceived = items.reduce((sum, item) => sum + Number(item.received_quantity || 0), 0);
   const differences = items.filter((item) => getReceivingDifference(item) !== 0).length;
@@ -3930,7 +4403,11 @@ function ReceivingDetailModal({
   }
 
   async function saveReceipt() {
-    if (!supabase || locked) return;
+    if (!supabase || !canManage || locked) return;
+    if (status === "pendiente") {
+      setError("Marca la mercancía como recibida antes de guardar.");
+      return;
+    }
     if (items.some((item) => Number(item.received_quantity || 0) < 0)) {
       setError("Las cantidades recibidas no pueden ser negativas.");
       return;
@@ -3938,7 +4415,10 @@ function ReceivingDetailModal({
 
     setSaving(true);
     setError(null);
-    const { data, error: saveError } = await supabase.rpc("save_abastecimiento_receipt", {
+    const expectedVersion = detail.receipt_id ? (detail.version ?? 1) : 0;
+    const commandKey = `${detail.purchase_order_id}:${expectedVersion}:${status}`;
+    const commandId = getCommandId(commandIds.current, commandKey);
+    const payload = {
       p_items: items.map((item) => ({
         expires_at: item.expires_at || null,
         lot_code: item.lot_code.trim(),
@@ -3948,15 +4428,21 @@ function ReceivingDetailModal({
       p_notes: notes.trim(),
       p_purchase_order_id: detail.purchase_order_id,
       p_status: status,
+    };
+    const result = await supabase.rpc("save_abastecimiento_receipt_v2", {
+      ...payload,
+      p_command_id: commandId,
+      p_expected_version: expectedVersion,
     });
     setSaving(false);
 
-    if (saveError) {
-      setError(saveError.message);
+    if (result.error) {
+      setError(result.error.message);
       return;
     }
 
-    await onSaved(data as ReceivingOrderDetail);
+    commandIds.current.delete(commandKey);
+    await onSaved(result.data as ReceivingOrderDetail);
   }
 
   async function generateStorageOrder() {
@@ -3989,7 +4475,7 @@ function ReceivingDetailModal({
         <div className="flex flex-wrap justify-start gap-2 md:justify-end">
           <Button variant="secondary" onClick={onClose}>Cerrar</Button>
           {detail.status === "recibida" ? <Button variant="secondary" disabled={pdfLoading} onClick={generateStorageOrder}>{pdfLoading ? "Generando..." : "Orden almacén PDF"}</Button> : null}
-          {!locked ? <Button disabled={saving} onClick={saveReceipt}>{saving ? "Guardando..." : "Guardar recepción"}</Button> : null}
+          {!locked ? <Button disabled={saving || status === "pendiente"} onClick={saveReceipt}>{saving ? "Guardando..." : "Guardar recepción"}</Button> : null}
         </div>
       </div>
 
@@ -4003,7 +4489,7 @@ function ReceivingDetailModal({
       <div className="mt-4 grid items-end gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 md:grid-cols-[220px_1fr_auto]">
         <Field label="Estado de recepción">
           <select disabled={locked} value={status} onChange={(event) => setStatus(event.target.value as ReceivingStatus)} className="field-input disabled:opacity-70">
-            {RECEIVING_STATUS_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            {statusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </Field>
         <Field label="Notas">
@@ -4012,8 +4498,17 @@ function ReceivingDetailModal({
         {!locked ? <Button variant="secondary" onClick={fillPurchasedQuantities}>Recibir todo</Button> : null}
       </div>
 
-      {locked ? (
+      {detail.status === "en_almacen" ? (
         <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">La recepción ya está en almacén; el registro queda cerrado.</p>
+      ) : null}
+      {!canManage ? (
+        <p className="mt-4 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700">Solo Logística, Almacén o Recepción pueden actualizar este registro.</p>
+      ) : null}
+      {externalChange ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800">
+          <span>Esta recepción cambió en otra sesión. Recarga antes de guardar.</span>
+          <Button variant="secondary" onClick={() => void onReload()}>Recargar datos</Button>
+        </div>
       ) : null}
       {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
 
@@ -4067,14 +4562,64 @@ function ReceivingDetailModal({
   );
 }
 
-function SimpleOpsView({ title, subtitle, records, columns }: { title: string; subtitle: string; records: SampleRecord[]; columns: string[] }) {
+function SimpleOpsView({
+  supabase,
+  rpc,
+  refreshKey,
+  selectedLocation,
+  locationKeys,
+  title,
+  subtitle,
+  columns,
+}: {
+  supabase: ReturnType<typeof createBrowserSupabaseClient>;
+  rpc: "list_abastecimiento_transfers_v2" | "list_abastecimiento_waste_entries_v2";
+  refreshKey: number;
+  selectedLocation: string;
+  locationKeys: string[];
+  title: string;
+  subtitle: string;
+  columns: string[];
+}) {
+  const [records, setRecords] = useState<SampleRecord[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadRecords = useCallback(async () => {
+    if (!supabase) return;
+    setLoading(true);
+    const { data, error: loadError } = await supabase.rpc(rpc);
+    setLoading(false);
+    if (loadError) {
+      setError(loadError.message);
+      return;
+    }
+    setError(null);
+    setRecords((data as SampleRecord[] | null) ?? []);
+  }, [rpc, supabase]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => void loadRecords(), 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadRecords, refreshKey]);
+
+  const visibleRecords = selectedLocation === "Todas"
+    ? records
+    : records.filter((record) => locationKeys.some((key) => record[key] === selectedLocation));
+
   return (
     <div>
-      <PageHeader title={title} subtitle={subtitle} />
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <PageHeader title={title} subtitle={subtitle} />
+        <Button variant="secondary" disabled={loading} onClick={() => void loadRecords()}>
+          {loading ? "Actualizando..." : "Actualizar"}
+        </Button>
+      </div>
+      {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
       <Card className="mt-6 p-0">
         <DataTable
           columns={columns.map((column) => [column, humanize(column)])}
-          rows={records}
+          rows={visibleRecords}
           renderCell={(key, row) => {
             const value = row[key];
             if (key === "estado" || key === "tipo") return <Badge status={String(value)} />;
@@ -4083,7 +4628,7 @@ function SimpleOpsView({ title, subtitle, records, columns }: { title: string; s
             return String(value ?? "—");
           }}
         />
-        {records.length === 0 ? <EmptyState message="Sin registros para esta sucursal" /> : null}
+        {!loading && visibleRecords.length === 0 ? <EmptyState message="Sin registros para esta sucursal" /> : null}
       </Card>
     </div>
   );
@@ -4094,11 +4639,15 @@ function ProductionView({
   locations,
   selectedLocation,
   role,
+  refreshKey,
+  realtimeBatch,
 }: {
   supabase: ReturnType<typeof createBrowserSupabaseClient>;
   locations: LocationRow[];
   selectedLocation: string;
   role: UserRole | null;
+  refreshKey: number;
+  realtimeBatch: RealtimeBatch;
 }) {
   const [productionDate, setProductionDate] = useState(formatTodayForFilename());
   const [search, setSearch] = useState("");
@@ -4109,6 +4658,7 @@ function ProductionView({
   const [productionLots, setProductionLots] = useState<ProductionLotSummary[]>([]);
   const [editingLot, setEditingLot] = useState<ProductionLotDetail | null>(null);
   const [clientRequestId, setClientRequestId] = useState(() => globalThis.crypto.randomUUID());
+  const commandIds = useRef(new Map<string, string>());
   const [loading, setLoading] = useState(false);
   const [lotsLoading, setLotsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -4123,6 +4673,7 @@ function ProductionView({
   const targetLocationId = editingLot?.location_id ?? selectedLocationId;
   const locationLabel = selectedLocation === "Todas" && role?.role !== "super_admin" ? role?.sucursal ?? "Mi sucursal" : selectedLocation;
   const canManageLots = role?.role === "super_admin";
+  const canCreateLots = getRealtimeLocationCapabilities(role).includes("production");
 
   const loadRows = useCallback(async () => {
     if (!supabase) return;
@@ -4146,7 +4697,7 @@ function ProductionView({
   const loadLots = useCallback(async () => {
     if (!supabase || !canManageLots) return;
     setLotsLoading(true);
-    const { data, error: lotsError } = await supabase.rpc("list_abastecimiento_production_lots", {
+    const { data, error: lotsError } = await supabase.rpc("list_abastecimiento_production_lots_v2", {
       p_date_from: null,
       p_date_to: null,
       p_limit: 50,
@@ -4169,14 +4720,21 @@ function ProductionView({
       void loadLots();
     }, 0);
     return () => window.clearTimeout(timeoutId);
-  }, [loadLots, loadRows]);
+  }, [loadLots, loadRows, refreshKey]);
 
   const visibleRows = rows.filter((row) => `${row.product} ${row.description ?? ""} ${row.packaging ?? ""} ${row.category ?? ""} ${row.subcategory ?? ""} ${row.location_name}`.toLowerCase().includes(search.trim().toLowerCase()));
   const producedTotal = rows.reduce((sum, row) => sum + Number(row.produced_quantity ?? 0), 0);
   const activeProducts = rows.filter((row) => Number(row.produced_quantity ?? 0) > 0).length;
   const bufferTotal = bufferItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const externalChange = Boolean(editingLot && hasNewerAggregateEvent(
+    realtimeBatch,
+    ["production"],
+    [editingLot.lot_id],
+    editingLot.version,
+  ));
 
   function addWildcardProduct() {
+    if (!canCreateLots) return;
     const locationId = targetLocationId ?? locations[0]?.id ?? "";
     if (!locationId) {
       setError("Selecciona una sucursal para agregar productos.");
@@ -4231,6 +4789,7 @@ function ProductionView({
   }
 
   function addToBuffer(row: ProductionStockProduct) {
+    if (!canCreateLots) return;
     const locationId = row.location_id ?? targetLocationId;
     if (!locationId) {
       setError("Selecciona una sucursal para armar el lote del día.");
@@ -4282,6 +4841,14 @@ function ProductionView({
 
   async function saveProductionLot() {
     if (!supabase || saving) return;
+    if (!canCreateLots) {
+      setError("No tienes permiso para registrar producción.");
+      return;
+    }
+    if (externalChange) {
+      setError("Este lote cambió en otra sesión. Cancela la edición y vuelve a abrirlo.");
+      return;
+    }
     if (!targetLocationId) {
       setError("Selecciona una sucursal para guardar el lote.");
       return;
@@ -4305,16 +4872,19 @@ function ProductionView({
       })),
       p_notes: notes.trim(),
     };
+    const commandKey = editingLot ? `production:update:${editingLot.lot_id}` : null;
     const { error: saveError } = editingLot
-      ? await supabase.rpc("update_abastecimiento_production_lot", {
+      ? await supabase.rpc("update_abastecimiento_production_lot_v2", {
         ...payload,
         p_lot_id: editingLot.lot_id,
+        p_command_id: getCommandId(commandIds.current, commandKey!),
+        p_expected_version: editingLot.version,
       })
-      : await supabase.rpc("save_abastecimiento_production_lot_idempotent", {
+      : await supabase.rpc("save_abastecimiento_production_lot_v2", {
         ...payload,
         p_location_id: targetLocationId,
         p_production_date: productionDate || null,
-        p_client_request_id: clientRequestId,
+        p_command_id: clientRequestId,
       });
     setSaving(false);
 
@@ -4323,6 +4893,7 @@ function ProductionView({
       return;
     }
 
+    if (commandKey) commandIds.current.delete(commandKey);
     resetBuffer();
     await Promise.all([loadRows(), loadLots()]);
   }
@@ -4331,7 +4902,7 @@ function ProductionView({
     if (!supabase || detailLoadingId) return;
     setDetailLoadingId(lotId);
     setError(null);
-    const { data, error: detailError } = await supabase.rpc("get_abastecimiento_production_lot", {
+    const { data, error: detailError } = await supabase.rpc("get_abastecimiento_production_lot_v2", {
       p_lot_id: lotId,
     });
     setDetailLoadingId(null);
@@ -4375,8 +4946,11 @@ function ProductionView({
     if (!window.confirm(`Borrar el lote ${lot.folio}? Esta acción ajustará el acumulado de producción.`)) return;
     setDeletingLotId(lot.lot_id);
     setError(null);
-    const { error: deleteError } = await supabase.rpc("delete_abastecimiento_production_lot", {
+    const commandKey = `production:delete:${lot.lot_id}`;
+    const { error: deleteError } = await supabase.rpc("delete_abastecimiento_production_lot_v2", {
       p_lot_id: lot.lot_id,
+      p_command_id: getCommandId(commandIds.current, commandKey),
+      p_expected_version: lot.version,
     });
     setDeletingLotId(null);
 
@@ -4385,6 +4959,7 @@ function ProductionView({
       return;
     }
 
+    commandIds.current.delete(commandKey);
     if (editingLot?.lot_id === lot.lot_id) resetBuffer();
     await Promise.all([loadRows(), loadLots()]);
   }
@@ -4396,8 +4971,9 @@ function ProductionView({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
+            disabled={!canCreateLots}
             onClick={addWildcardProduct}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2 text-xs font-black text-amber-950 transition hover:bg-amber-100 shadow-sm"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2 text-xs font-black text-amber-950 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span>✨ + Producto Comodín / Especial</span>
           </button>
@@ -4415,7 +4991,7 @@ function ProductionView({
 
       <div className="mt-5 grid gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 md:grid-cols-[180px_1fr_auto] md:items-end">
         <Field label="Fecha">
-          <input value={productionDate} onChange={(event) => setProductionDate(event.target.value)} type="date" className="field-input" />
+          <input value={productionDate} max={formatTodayForFilename()} onChange={(event) => setProductionDate(event.target.value)} type="date" className="field-input" />
         </Field>
         <Field label="Buscar producto">
           <input value={search} onChange={(event) => setSearch(event.target.value)} className="field-input" placeholder="Nombre, empaque o categoría..." />
@@ -4426,14 +5002,16 @@ function ProductionView({
       </div>
 
       {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
+      {!canCreateLots ? <p className="mt-4 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700">Solo Producción o administración de sucursal pueden registrar lotes.</p> : null}
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {visibleRows.map((row) => (
           <button
             key={`${row.location_id ?? "all"}-${row.finished_product_id}`}
             type="button"
+            disabled={!canCreateLots}
             onClick={() => addToBuffer(row)}
-            className="group flex min-h-[188px] flex-col overflow-hidden rounded-xl border border-[#EDE8E3] bg-white text-left shadow-[0_1px_4px_rgba(28,25,23,0.04)] transition hover:-translate-y-0.5 hover:border-[#D6C9BF] hover:shadow-[0_12px_28px_rgba(28,25,23,0.08)] disabled:cursor-wait disabled:opacity-70"
+            className="group flex min-h-[188px] flex-col overflow-hidden rounded-xl border border-[#EDE8E3] bg-white text-left shadow-[0_1px_4px_rgba(28,25,23,0.04)] transition hover:-translate-y-0.5 hover:border-[#D6C9BF] hover:shadow-[0_12px_28px_rgba(28,25,23,0.08)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             <ProductThumb product={row} size="lg" />
             <div className="flex flex-1 flex-col p-4">
@@ -4489,12 +5067,19 @@ function ProductionView({
 
             <button
               type="button"
+              disabled={!canCreateLots}
               onClick={addWildcardProduct}
-              className="mt-3 w-full flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-amber-400 bg-amber-50/80 px-3 py-2 text-xs font-black text-amber-900 transition hover:bg-amber-100 shadow-sm"
+              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-amber-400 bg-amber-50/80 px-3 py-2 text-xs font-black text-amber-900 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span>✨ + Agregar Producto Comodín (Sin receta)</span>
             </button>
           </div>
+
+          {externalChange ? (
+            <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
+              Este lote cambió en otra sesión. Cancela la edición y vuelve a abrirlo antes de guardar.
+            </p>
+          ) : null}
 
           <div className="mt-4 space-y-3">
             {bufferItems.map((item) => {
@@ -4654,7 +5239,7 @@ function ProductionView({
 
         <div className="border-t border-[#EDE8E3] p-4">
           {editingLot ? <button type="button" onClick={resetBuffer} className="mb-2 w-full rounded-lg border border-[#EDE8E3] px-4 py-2 text-sm font-bold text-stone-600">Cancelar edición</button> : null}
-          <Button disabled={saving || bufferItems.length === 0 || !targetLocationId} onClick={() => void saveProductionLot()}>
+          <Button disabled={!canCreateLots || saving || externalChange || bufferItems.length === 0 || !targetLocationId} onClick={() => void saveProductionLot()}>
             {saving ? "Guardando..." : editingLot ? "Guardar cambios" : "Guardar lote"}
           </Button>
         </div>
@@ -4668,11 +5253,13 @@ function QualityView({
   locations,
   selectedLocation,
   role,
+  refreshKey,
 }: {
   supabase: ReturnType<typeof createBrowserSupabaseClient>;
   locations: LocationRow[];
   selectedLocation: string;
   role: UserRole | null;
+  refreshKey: number;
 }) {
   const [activeTab, setActiveTab] = useState<"verificar" | "historial">("verificar");
   const [verificationDate, setVerificationDate] = useState(formatTodayForFilename());
@@ -4690,6 +5277,7 @@ function QualityView({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [commandId, setCommandId] = useState(() => globalThis.crypto.randomUUID());
 
   const selectedLocationId = selectedLocation === "Todas"
     ? role?.role === "super_admin"
@@ -4797,10 +5385,13 @@ function QualityView({
   }, [selectedLocationId, supabase]);
 
   useEffect(() => {
-    void loadProductionLots();
-    void loadProductionToVerify();
-    void loadVerifications();
-  }, [loadProductionLots, loadProductionToVerify, loadVerifications]);
+    const timeoutId = window.setTimeout(() => {
+      void loadProductionLots();
+      void loadProductionToVerify();
+      void loadVerifications();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadProductionLots, loadProductionToVerify, loadVerifications, refreshKey]);
 
   const updateItemPdvQty = (finishedProductId: number, value: number) => {
     const safeQty = Math.max(0, isNaN(value) ? 0 : value);
@@ -4885,10 +5476,11 @@ function QualityView({
         storage_notes: it.point_of_sale_quantity !== it.declared_quantity ? it.storage_notes.trim() : null,
         lot_item_id: it.lot_item_id,
       })),
+      p_command_id: commandId,
     };
 
     const { data, error: saveErr } = await supabase.rpc(
-      "save_abastecimiento_quality_verification",
+      "save_abastecimiento_quality_verification_v2",
       payload
     );
     setSaving(false);
@@ -4905,6 +5497,7 @@ function QualityView({
       }.`
     );
     setGeneralNotes("");
+    setCommandId(globalThis.crypto.randomUUID());
     await Promise.all([loadVerifications(), loadProductionLots(), loadProductionToVerify()]);
   };
 
@@ -5451,16 +6044,17 @@ function MermaPvView({
   locations,
   selectedLocation,
   role,
+  refreshKey,
 }: {
   supabase: ReturnType<typeof createBrowserSupabaseClient>;
   locations: LocationRow[];
   selectedLocation: string;
   role: UserRole | null;
+  refreshKey: number;
 }) {
   const [activeTab, setActiveTab] = useState<"declarar" | "historial">("declarar");
   const [mermaDate, setMermaDate] = useState(formatTodayForFilename());
   const [search, setSearch] = useState("");
-  const [selectedVerificationId, setSelectedVerificationId] = useState<string>("all");
   const [qualityVerifications, setQualityVerifications] = useState<QualityVerificationSummary[]>([]);
   const [items, setItems] = useState<MermaPvDraftItem[]>([]);
   const [generalNotes, setGeneralNotes] = useState("");
@@ -5473,6 +6067,7 @@ function MermaPvView({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [commandId, setCommandId] = useState(() => globalThis.crypto.randomUUID());
 
   const selectedLocationId = selectedLocation === "Todas"
     ? role?.role === "super_admin"
@@ -5482,14 +6077,10 @@ function MermaPvView({
 
   const targetLocationId = useMemo(() => {
     if (selectedLocationId) return selectedLocationId;
-    if (selectedVerificationId !== "all") {
-      const v = qualityVerifications.find((item) => item.verification_id === selectedVerificationId);
-      if (v?.location_id) return v.location_id;
-    }
     const uniqueLocs = Array.from(new Set(qualityVerifications.map((v) => v.location_id).filter(Boolean)));
     if (uniqueLocs.length === 1) return uniqueLocs[0];
     return locations.find((l) => l.name === "Teran")?.id ?? locations[0]?.id ?? null;
-  }, [selectedLocationId, selectedVerificationId, qualityVerifications, locations]);
+  }, [selectedLocationId, qualityVerifications, locations]);
 
   const locationLabel = selectedLocation === "Todas" && role?.role !== "super_admin" ? role?.sucursal ?? "Mi sucursal" : selectedLocation;
 
@@ -5518,7 +6109,7 @@ function MermaPvView({
     const { data, error: prodErr } = await supabase.rpc("list_abastecimiento_quality_products_for_merma", {
       p_location_id: selectedLocationId,
       p_date: mermaDate || null,
-      p_verification_id: selectedVerificationId !== "all" ? selectedVerificationId : null,
+      p_verification_id: null,
     });
     setLoading(false);
 
@@ -5566,7 +6157,7 @@ function MermaPvView({
       notes: "",
     }));
     setItems(draftItems);
-  }, [selectedLocationId, selectedVerificationId, supabase, mermaDate]);
+  }, [selectedLocationId, supabase, mermaDate]);
 
   const loadMermaRecords = useCallback(async () => {
     if (!supabase) return;
@@ -5587,10 +6178,13 @@ function MermaPvView({
   }, [selectedLocationId, supabase]);
 
   useEffect(() => {
-    void loadQualityVerifications();
-    void loadProductsToMerma();
-    void loadMermaRecords();
-  }, [loadQualityVerifications, loadProductsToMerma, loadMermaRecords]);
+    const timeoutId = window.setTimeout(() => {
+      void loadQualityVerifications();
+      void loadProductsToMerma();
+      void loadMermaRecords();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadQualityVerifications, loadProductsToMerma, loadMermaRecords, refreshKey]);
 
   const updateItemMermaQty = (finishedProductId: number, value: number) => {
     setItems((current) =>
@@ -5675,7 +6269,7 @@ function MermaPvView({
     const payload = {
       p_location_id: targetLocationId,
       p_merma_date: mermaDate || null,
-      p_verification_id: selectedVerificationId !== "all" ? selectedVerificationId : null,
+      p_verification_id: null,
       p_notes: generalNotes.trim() || null,
       p_items: items.map((it) => ({
         finished_product_id: it.finished_product_id,
@@ -5690,10 +6284,11 @@ function MermaPvView({
         notes: it.notes.trim() || null,
         quality_item_id: it.quality_item_id,
       })),
+      p_command_id: commandId,
     };
 
     const { data, error: saveErr } = await supabase.rpc(
-      "save_abastecimiento_merma_pv",
+      "save_abastecimiento_merma_pv_v2",
       payload
     );
     setSaving(false);
@@ -5722,6 +6317,7 @@ function MermaPvView({
       )}]).`
     );
     setGeneralNotes("");
+    setCommandId(globalThis.crypto.randomUUID());
     await Promise.all([loadMermaRecords(), loadProductsToMerma(), loadQualityVerifications()]);
   };
 
@@ -5867,18 +6463,8 @@ function MermaPvView({
             </Field>
 
             <Field label="Origen de Calidad">
-              <select
-                value={selectedVerificationId}
-                onChange={(event) => setSelectedVerificationId(event.target.value)}
-                className="field-input"
-              >
+              <select value="all" disabled className="field-input disabled:opacity-80">
                 <option value="all">🛡️ Toda la recepción verificada en PDV del día</option>
-                {qualityVerifications.map((v) => (
-                  <option key={v.verification_id} value={v.verification_id}>
-                    {v.is_merma_declared ? "✓ [Declarada] " : "⏳ [Pendiente] "}
-                    {v.folio} · {v.location_name} ({formatNumber(v.total_point_of_sale)} unid. en PDV)
-                  </option>
-                ))}
               </select>
             </Field>
 
@@ -6596,17 +7182,29 @@ function formatWpDateTime(value: string | null) {
   });
 }
 
-function SettingsView({ supabase }: { supabase: ReturnType<typeof createBrowserSupabaseClient> }) {
+function SettingsView({
+  supabase,
+  refreshKey,
+}: {
+  supabase: ReturnType<typeof createBrowserSupabaseClient>;
+  refreshKey: number;
+}) {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title="Ajustes" subtitle="Configuración del sistema · solo super administradores" />
-      <MinimaxInventorySettingsPanel supabase={supabase} />
-      <WhatsAppSettingsPanel supabase={supabase} />
+      <MinimaxInventorySettingsPanel supabase={supabase} refreshKey={refreshKey} />
+      <WhatsAppSettingsPanel supabase={supabase} refreshKey={refreshKey} />
     </div>
   );
 }
 
-function MinimaxInventorySettingsPanel({ supabase }: { supabase: ReturnType<typeof createBrowserSupabaseClient> }) {
+function MinimaxInventorySettingsPanel({
+  supabase,
+  refreshKey,
+}: {
+  supabase: ReturnType<typeof createBrowserSupabaseClient>;
+  refreshKey: number;
+}) {
   const [status, setStatus] = useState<MinimaxInventoryStatus | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [loading, setLoading] = useState(true);
@@ -6633,7 +7231,7 @@ function MinimaxInventorySettingsPanel({ supabase }: { supabase: ReturnType<type
       if (active) setLoading(false);
     })();
     return () => { active = false; };
-  }, [loadStatus]);
+  }, [loadStatus, refreshKey]);
 
   async function configure() {
     if (!supabase || saving || apiKey.trim().length < 12) return;
@@ -6723,7 +7321,13 @@ function MinimaxInventorySettingsPanel({ supabase }: { supabase: ReturnType<type
   );
 }
 
-function WhatsAppSettingsPanel({ supabase }: { supabase: ReturnType<typeof createBrowserSupabaseClient> }) {
+function WhatsAppSettingsPanel({
+  supabase,
+  refreshKey,
+}: {
+  supabase: ReturnType<typeof createBrowserSupabaseClient>;
+  refreshKey: number;
+}) {
   const [status, setStatus] = useState<WpStatus | null>(null);
   const [employees, setEmployees] = useState<WpEmployee[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -6781,7 +7385,7 @@ function WhatsAppSettingsPanel({ supabase }: { supabase: ReturnType<typeof creat
       active = false;
       clearInterval(timer);
     };
-  }, [loadStatus, loadConfig]);
+  }, [loadStatus, loadConfig, refreshKey]);
 
   function toggleEmployee(id: string) {
     setSelectedIds((current) => {
@@ -6917,15 +7521,17 @@ function WhatsAppSettingsPanel({ supabase }: { supabase: ReturnType<typeof creat
               <optgroup label="Requisiciones">
                 <option value="requisition_created">Nueva Requisición Creada</option>
                 <option value="requisition_status_changed">Cualquier Cambio de Estado (Requi)</option>
-                <option value="requisition_status_urgente">Requisición marcada como Urgente</option>
-                <option value="requisition_status_revisada">Requisición marcada como Revisada</option>
-                <option value="requisition_status_aprobada">Requisición Aprobada</option>
-                <option value="requisition_status_cancelada">Requisición Cancelada</option>
+                <option value="requisition_status_revisando_compras">Compras inició la revisión</option>
+                <option value="requisition_status_aprobada_compras">Requisición aprobada por Compras</option>
+                <option value="requisition_status_cancelada_compras">Requisición cancelada por Compras</option>
+                <option value="requisition_status_completado">Requisición completada en almacén</option>
               </optgroup>
               <optgroup label="Compras">
                 <option value="purchase_order_created">Nueva Orden de Compra Creada</option>
                 <option value="purchase_order_status_changed">Cualquier Cambio de Estado (Compra)</option>
+                <option value="purchase_order_status_revisando_gerencia">Orden reenviada a revisión</option>
                 <option value="purchase_order_status_aprobado">Orden de Compra Aprobada</option>
+                <option value="purchase_order_status_rechazado">Orden de Compra Rechazada</option>
                 <option value="purchase_order_status_completado">Orden de Compra Completada</option>
                 <option value="purchase_order_status_cancelado">Orden de Compra Cancelada</option>
               </optgroup>
@@ -7291,10 +7897,6 @@ function filterByLocation<T extends { location_name: string }>(rows: T[], select
   return selectedLocation === "Todas" ? rows : rows.filter((row) => row.location_name === selectedLocation);
 }
 
-function filterSample(rows: SampleRecord[], selectedLocation: string, key: string) {
-  return selectedLocation === "Todas" ? rows : rows.filter((row) => row[key] === selectedLocation);
-}
-
 function humanize(value: string) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -7317,6 +7919,195 @@ function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   if (typeof error === "object" && error && "message" in error) return String((error as { message: unknown }).message);
   return "Ocurrió un error inesperado.";
+}
+
+async function listAbastecimientoPurchaseOrders(client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>) {
+  return client.rpc("list_abastecimiento_purchase_orders_v2");
+}
+
+async function listAbastecimientoRequisitions(client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>) {
+  return client.rpc("list_abastecimiento_requisitions_v2");
+}
+
+async function listAbastecimientoReceivingOrders(
+  client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>,
+  params: { p_date_from: string | null; p_date_to: string | null },
+) {
+  return client.rpc("list_abastecimiento_receiving_orders_v2", params);
+}
+
+function getCommandId(commands: Map<string, string>, key: string) {
+  const existing = commands.get(key);
+  if (existing) return existing;
+  const commandId = globalThis.crypto.randomUUID();
+  commands.set(key, commandId);
+  return commandId;
+}
+
+function canonicalRequisitionStatus(status: RequisitionStatus): RequisitionWorkflowStatus {
+  if (status === "urgente") return "pendiente";
+  if (status === "revisada") return "revisando_compras";
+  if (status === "aprobada") return "aprobada_compras";
+  if (status === "completado" || status === "completada") return "completado";
+  if (status === "cancelada") return "cancelada_compras";
+  return status;
+}
+
+function getRequisitionStatusOptions(status: RequisitionWorkflowStatus) {
+  const allowed: Record<RequisitionWorkflowStatus, RequisitionWorkflowStatus[]> = {
+    pendiente: ["pendiente", "revisando_compras", "cancelada_compras"],
+    revisando_compras: ["revisando_compras", "aprobada_compras", "cancelada_compras"],
+    aprobada_compras: ["aprobada_compras"],
+    cancelada_compras: ["cancelada_compras"],
+    completado: ["completado"],
+  };
+  return REQUISITION_STATUS_OPTIONS.filter(([value]) => allowed[status].includes(value));
+}
+
+function canonicalPurchaseOrderStatus(status: PurchaseOrderStatus): PurchaseOrderWorkflowStatus {
+  if (status === "pendiente" || status === "urgente" || status === "parcial") return "revisando_gerencia";
+  return status;
+}
+
+type PurchasePermissions = {
+  accounting: boolean;
+  management: boolean;
+  purchasing: boolean;
+};
+
+function getPurchasePermissions(role: UserRole | null): PurchasePermissions {
+  const admin = role?.role === "super_admin" || role?.role === "branch_admin";
+  const department = normalize(role?.department ?? "");
+  return {
+    accounting: admin || department === "contabilidad" || department === "finanzas",
+    management: admin || department === "gerencia" || department === "direccion",
+    purchasing: admin || department === "compras",
+  };
+}
+
+function getRealtimeLocationCapabilities(role: UserRole | null) {
+  if (!role) return [];
+  const all = ["purchasing", "accounting", "management", "receiving", "production", "inventory"];
+  if (role.role === "super_admin" || role.role === "branch_admin") return all;
+
+  const department = normalize(role.department ?? "");
+  if (department === "compras") return ["purchasing", "inventory"];
+  if (department === "contabilidad" || department === "finanzas") return ["accounting", "inventory"];
+  if (department === "gerencia" || department === "direccion") return ["management", "inventory"];
+  if (["logistica", "almacen", "recepcion"].includes(department)) return ["receiving", "inventory"];
+  if (department === "produccion") return ["production", "inventory"];
+  return ["inventory"];
+}
+
+function canManageReceiving(role: UserRole | null) {
+  if (role?.role === "super_admin" || role?.role === "branch_admin") return true;
+  return ["logistica", "almacen", "recepcion"].includes(normalize(role?.department ?? ""));
+}
+
+function getPurchaseOrderActions(order: PurchaseOrderRow, permissions: PurchasePermissions, currentUserId?: string): Array<[PurchaseOrderAction, string]> {
+  const status = canonicalPurchaseOrderStatus(order.status);
+  if (status === "rechazado") return permissions.purchasing ? [["cancelar", "Cancelar"]] : [];
+  if (status !== "revisando_gerencia") return [];
+  const actions: Array<[PurchaseOrderAction, string]> = [];
+  if (!order.accounting_approved_at && permissions.accounting) actions.push(["aprobar_contabilidad", "Aprobar Contabilidad"]);
+  if (order.accounting_approved_at && !order.management_approved_at && permissions.management && order.accounting_approved_by !== currentUserId) actions.push(["aprobar_gerencia", "Aprobar Gerencia"]);
+  if (permissions.accounting || permissions.management) actions.push(["rechazar", "Rechazar"]);
+  if (permissions.purchasing) actions.push(["cancelar", "Cancelar"]);
+  return actions;
+}
+
+function getReceivingStatusOptions(status: ReceivingStatus) {
+  const allowed: Record<ReceivingStatus, ReceivingStatus[]> = {
+    pendiente: ["pendiente", "recibida"],
+    recibida: ["recibida", "en_almacen"],
+    en_almacen: ["en_almacen"],
+  };
+  return RECEIVING_STATUS_OPTIONS.filter(([value]) => allowed[status].includes(value));
+}
+
+function getRealtimeDomains(events: AbastecimientoDomainEvent[]) {
+  const allDomains = Object.keys(INITIAL_REALTIME_INVALIDATIONS) as RealtimeDomain[];
+  if (events.length === 0) return new Set(allDomains);
+
+  const affected = new Set<RealtimeDomain>();
+  events.forEach((event) => {
+    const key = `${event.aggregate_type}.${event.event_type}`;
+    const aggregate = normalize(event.aggregate_type);
+    if (
+      (event.location_id === null && event.audience_user_id === null) ||
+      ["area", "supplier", "product", "productsettings", "inventorycatalog", "location", "category", "department", "inventoryassignment", "locationarea", "userrole"].includes(aggregate)
+    ) affected.add("workspace");
+    if (key.includes("requisition")) affected.add("requisitions");
+    if (key.includes("purchase_order") || key.includes("purchase.")) {
+      affected.add("purchases");
+      affected.add("receipts");
+    }
+    if (key.includes("receipt")) {
+      affected.add("receipts");
+      affected.add("inventory");
+    }
+    if (key.includes("inventory") || key.includes("transfer") || key.includes("waste")) affected.add("inventory");
+    if (["finishedproduct", "productlocation", "recipe"].includes(aggregate)) {
+      affected.add("production");
+      affected.add("inventory");
+      affected.add("quality");
+      affected.add("mermaPv");
+    }
+    if (key.includes("production")) {
+      affected.add("production");
+      affected.add("inventory");
+      affected.add("quality");
+    }
+    if (key.includes("quality")) {
+      affected.add("quality");
+      affected.add("mermaPv");
+    }
+    if (key.includes("merma")) {
+      affected.add("mermaPv");
+      affected.add("inventory");
+    }
+  });
+  return affected;
+}
+
+function incrementRealtimeInvalidations(current: RealtimeInvalidations, affected: Set<RealtimeDomain>) {
+  const next = { ...current };
+  affected.forEach((domain) => {
+    next[domain] += 1;
+  });
+  return next;
+}
+
+function mergeLatestRealtimeEvents(
+  current: AbastecimientoDomainEvent[],
+  incoming: AbastecimientoDomainEvent[],
+) {
+  if (incoming.length === 0) return current;
+  const events = new Map(current.map((event) => [`${event.aggregate_type}:${event.aggregate_id}`, event]));
+  incoming.forEach((event) => {
+    const key = `${event.aggregate_type}:${event.aggregate_id}`;
+    const previous = events.get(key);
+    if (!previous || event.aggregate_version >= previous.aggregate_version) events.set(key, event);
+  });
+  return Array.from(events.values());
+}
+
+function hasNewerAggregateEvent(
+  batch: RealtimeBatch,
+  aggregateTypes: string[],
+  aggregateIds: Array<string | null>,
+  version?: number,
+) {
+  const ids = new Set(aggregateIds.filter((id): id is string => Boolean(id)));
+  return batch.events.some((event) => {
+    const payloadId = typeof event.payload.purchase_order_id === "string" ? event.payload.purchase_order_id : null;
+    const matchesAggregate = aggregateTypes.includes(event.aggregate_type) && (ids.has(event.aggregate_id) || Boolean(payloadId && ids.has(payloadId)));
+    return matchesAggregate && (event.event_type === "deleted" || version === undefined || event.aggregate_version > version);
+  });
+}
+
+function hasNewerVersion(current?: number, baseline?: number) {
+  return typeof current === "number" && typeof baseline === "number" && current > baseline;
 }
 
 function normalize(value: string) {

@@ -35,7 +35,7 @@ async function removeMany(ids) {
  * Equivalente a useMultiFileAuthState pero usando la base de datos, para que
  * la sesion sobreviva reinicios del gateway sin volver a escanear el QR.
  */
-export async function useSupabaseAuthState() {
+export async function createSupabaseAuthState() {
   const initial = await readMany(["creds"]);
   const creds = initial.creds || initAuthCreds();
 

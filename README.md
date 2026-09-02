@@ -162,6 +162,16 @@ cd whatsapp-gateway && npm install
 pm2 restart kadmiel-whatsapp-gateway
 ```
 
+### Primer despliegue del flujo realtime
+
+La migración `disable_legacy_mutations` es la fase de cierre: en el primer despliegue no ejecutes todas las migraciones nuevas con un solo `supabase db push`.
+
+1. Aplica `realtime_workflow_events`, `inventory_movement_ledger`, `security_outbox`, `temporal_inventory_cost`, `temporal_inventory_running_balance` e `internal_function_privileges`.
+2. Publica el frontend nuevo en Netlify y reinicia el gateway de WhatsApp cuando esté disponible el VPS.
+3. Aplica `disable_legacy_mutations`, `harden_quality_read_rpcs` y `pin_remaining_internal_search_paths` para retirar contratos antiguos y cerrar las consultas heredadas.
+
+Este repositorio sólo contiene las migraciones de este corte. Antes de usar `supabase db push`, enlaza el proyecto y trae o baselínea también su historial remoto anterior; mientras tanto aplica las migraciones nuevas individualmente y en orden.
+
 ---
 
 ## Operación / problemas comunes

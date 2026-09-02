@@ -8,7 +8,7 @@ import QRCode from "qrcode";
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { config } from "./config.js";
-import { useSupabaseAuthState } from "./authState.js";
+import { createSupabaseAuthState } from "./authState.js";
 
 let sock = null;
 let auth = null;
@@ -33,7 +33,7 @@ export async function startSocket() {
   starting = true;
 
   try {
-    auth = await useSupabaseAuthState();
+    auth = await createSupabaseAuthState();
 
     let version;
     try {
@@ -133,7 +133,7 @@ export async function logout() {
 }
 
 /** Envia un mensaje de texto. Resuelve el JID con onWhatsApp (maneja el "1" de MX). */
-export async function sendText(phone, body) {
+export async function sendText(phone, body, messageId) {
   if (!sock?.user) throw new Error("WhatsApp no esta conectado");
 
   const digits = String(phone || "").replace(/\D/g, "");
@@ -150,5 +150,5 @@ export async function sendText(phone, body) {
     logger.warn({ err: err?.message }, "onWhatsApp fallo; se intenta con el JID directo");
   }
 
-  await sock.sendMessage(jid, { text: body });
+  await sock.sendMessage(jid, { text: body }, { messageId });
 }

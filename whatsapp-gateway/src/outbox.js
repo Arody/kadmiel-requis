@@ -13,7 +13,11 @@ export async function processOutbox() {
 
   try {
     for (;;) {
-      const { data: claimed, error } = await supabase.rpc("wp_gw_claim_messages", { p_limit: 10 });
+      if (!isConnected()) break;
+      const { data: claimed, error } = await supabase.rpc("wp_gw_claim_messages_v2", {
+        p_limit: 1,
+        p_max: config.maxAttempts,
+      });
       if (error) {
         logger.error({ err: error.message }, "no se pudo reclamar de la cola");
         break;
@@ -22,17 +26,30 @@ export async function processOutbox() {
 
       for (const msg of claimed) {
         try {
-          await sendText(msg.to_phone, msg.body);
-          await supabase.rpc("wp_gw_mark_sent", { p_id: msg.id });
+          await sendText(msg.to_phone, msg.body, String(msg.id).replaceAll("-", "").toUpperCase());
+          const { data: markedSent, error: markSentError } = await supabase.rpc("wp_gw_mark_sent_v2", {
+            p_id: msg.id,
+            p_claim_token: msg.claim_token,
+          });
+          if (markSentError) throw new Error(`no se pudo confirmar el envio: ${markSentError.message}`);
+          if (!markedSent) throw new Error("el lease de envio vencio antes de poder confirmarlo");
           logger.info({ id: msg.id, to: msg.to_phone }, "mensaje enviado");
         } catch (err) {
           const errMsg = String(err?.message || err).slice(0, 500);
-          await supabase.rpc("wp_gw_mark_failed", {
+          const { data: markedFailed, error: markFailedError } = await supabase.rpc("wp_gw_mark_failed_v2", {
             p_id: msg.id,
+            p_claim_token: msg.claim_token,
             p_error: errMsg,
             p_max: config.maxAttempts,
           });
+          if (markFailedError || !markedFailed) {
+            logger.error(
+              { id: msg.id, err: markFailedError?.message ?? "lease vencido" },
+              "no se pudo devolver el mensaje a la cola",
+            );
+          }
           logger.warn({ id: msg.id, to: msg.to_phone, err: errMsg }, "mensaje fallido");
+          break;
         }
       }
     }
