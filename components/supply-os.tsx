@@ -68,6 +68,17 @@ type ProductRow = {
   rack_id: string | null;
   delicate_management: boolean | null;
   location_ids: string[];
+  supplier_id?: string | null;
+  supplier_2_id?: string | null;
+  supplier_3_id?: string | null;
+  brand_2?: string | null;
+  presentation_2?: string | null;
+  unit_price_2?: number | string | null;
+  total_price_2?: number | string | null;
+  brand_3?: string | null;
+  presentation_3?: string | null;
+  unit_price_3?: number | string | null;
+  total_price_3?: number | string | null;
 };
 
 type InventoryLocationLink = {
@@ -85,6 +96,46 @@ type InventoryDepartmentLink = {
   department_id: string;
 };
 
+type PaymentMethod = "efectivo" | "tarjeta_credito" | "tarjeta_debito" | "transferencia";
+
+const PAYMENT_METHODS: Array<{ id: PaymentMethod; label: string; icon: string }> = [
+  { id: "efectivo", label: "Efectivo", icon: "💵" },
+  { id: "tarjeta_credito", label: "Tarjeta de Crédito", icon: "💳" },
+  { id: "tarjeta_debito", label: "Tarjeta de Débito", icon: "💳" },
+  { id: "transferencia", label: "Transferencia", icon: "🏦" },
+];
+
+function normalizePaymentMethod(val: unknown): PaymentMethod {
+  if (typeof val !== "string") return "transferencia";
+  const clean = val.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "_");
+  if (clean.includes("efectivo")) return "efectivo";
+  if (clean.includes("credito")) return "tarjeta_credito";
+  if (clean.includes("debito")) return "tarjeta_debito";
+  if (clean.includes("transfer")) return "transferencia";
+  return "transferencia";
+}
+
+function getPaymentMethodLabel(val: unknown): string {
+  const norm = normalizePaymentMethod(val);
+  switch (norm) {
+    case "efectivo": return "Efectivo";
+    case "tarjeta_credito": return "Tarjeta de Crédito";
+    case "tarjeta_debito": return "Tarjeta de Débito";
+    case "transferencia": return "Transferencia";
+    default: return "Transferencia";
+  }
+}
+
+function canUserEditPaymentMethod(role: UserRole | null): boolean {
+  if (!role) return false;
+  if (role.role === "super_admin" || role.role === "branch_admin") return true;
+  const dept = normalize(role.department ?? "");
+  const area = normalize(role.area ?? "");
+  return [
+    "compras", "administracion", "gerencia", "direccion", "contabilidad", "finanzas"
+  ].some((allowed) => dept === allowed || area === allowed);
+}
+
 type RequisitionDraftItem = {
   clientId: string;
   itemId?: string | null;
@@ -94,7 +145,96 @@ type RequisitionDraftItem = {
   product: ProductRow;
   selected?: boolean;
   revision_note?: string;
+  supplierId?: string | null;
+  supplierName?: string | null;
+  paymentMethod?: PaymentMethod | string;
+  unitPrice?: number | string | null;
+  brand?: string | null;
+  presentation?: string | null;
 };
+
+type ProductSupplierOption = {
+  supplierId: string;
+  supplierName: string;
+  tier: "principal" | "alterno_1" | "alterno_2";
+  label: string;
+  brand: string | null;
+  presentation: string | null;
+  price: number;
+};
+
+function canUserSeePrices(role: UserRole | null): boolean {
+  if (!role) return false;
+  if (role.role === "super_admin" || role.role === "branch_admin") return true;
+  const dept = normalize(role.department ?? "");
+  const area = normalize(role.area ?? "");
+  if (dept === "produccion" || area === "produccion") return false;
+  return dept === "administracion" || area === "administracion" || dept === "compras" || area === "compras" || dept === "contabilidad" || area === "contabilidad" || dept === "finanzas" || area === "finanzas";
+}
+
+function isPurchasingOrAdmin(role: UserRole | null): boolean {
+  if (!role) return false;
+  if (role.role === "super_admin" || role.role === "branch_admin") return true;
+  const dept = normalize(role.department ?? "");
+  const area = normalize(role.area ?? "");
+  return dept === "compras" || area === "compras" || dept === "administracion" || area === "administracion";
+}
+
+function getProductSupplierOptions(
+  product: ProductRow | undefined,
+  supplierMap: Map<string, string>,
+  showPrices: boolean,
+): ProductSupplierOption[] {
+  if (!product) return [];
+  const options: ProductSupplierOption[] = [];
+
+  if (product.supplier_id) {
+    const name = supplierMap.get(product.supplier_id) ?? "Proveedor Principal";
+    const price = Number(product.total_price ?? product.unit_price ?? 0);
+    const priceText = showPrices && price > 0 ? ` (${formatCurrency(price)})` : "";
+    options.push({
+      supplierId: product.supplier_id,
+      supplierName: name,
+      tier: "principal",
+      label: `${name}${priceText} · Principal`,
+      brand: product.brand,
+      presentation: product.presentation,
+      price,
+    });
+  }
+
+  if (product.supplier_2_id) {
+    const name = supplierMap.get(product.supplier_2_id) ?? "Proveedor Alterno 1";
+    const price = Number(product.total_price_2 ?? product.unit_price_2 ?? product.total_price ?? product.unit_price ?? 0);
+    const priceText = showPrices && price > 0 ? ` (${formatCurrency(price)})` : "";
+    options.push({
+      supplierId: product.supplier_2_id,
+      supplierName: name,
+      tier: "alterno_1",
+      label: `${name}${priceText} · Alterno 1`,
+      brand: product.brand_2 ?? product.brand,
+      presentation: product.presentation_2 ?? product.presentation,
+      price,
+    });
+  }
+
+  if (product.supplier_3_id) {
+    const name = supplierMap.get(product.supplier_3_id) ?? "Proveedor Alterno 2";
+    const price = Number(product.total_price_3 ?? product.unit_price_3 ?? product.total_price ?? product.unit_price ?? 0);
+    const priceText = showPrices && price > 0 ? ` (${formatCurrency(price)})` : "";
+    options.push({
+      supplierId: product.supplier_3_id,
+      supplierName: name,
+      tier: "alterno_2",
+      label: `${name}${priceText} · Alterno 2`,
+      brand: product.brand_3 ?? product.brand,
+      presentation: product.presentation_3 ?? product.presentation,
+      price,
+    });
+  }
+
+  return options;
+}
 
 type SupplyArea = {
   id: string;
@@ -142,6 +282,8 @@ type SupplyRequisitionItem = {
   line_total: number | string;
   almacen: string | null;
   supplier_name?: string | null;
+  supplier_id?: string | null;
+  payment_method?: PaymentMethod | string | null;
 };
 
 type SupplyRequisitionDetail = SupplyRequisition & {
@@ -150,6 +292,7 @@ type SupplyRequisitionDetail = SupplyRequisition & {
   approved_at: string | null;
   cancelled_reason?: string | null;
   updated_at: string;
+  payment_totals?: Record<string, number>;
   items: SupplyRequisitionItem[];
 };
 
@@ -190,6 +333,7 @@ type PurchaseOrderDetail = PurchaseOrderRow & {
   area_name: string | null;
   requisition_approved_at: string | null;
   updated_at: string;
+  payment_totals?: Record<string, number>;
   items: SupplyRequisitionItem[];
 };
 
@@ -764,6 +908,7 @@ export default function SupplyOsApp() {
   const [inventoryAreas, setInventoryAreas] = useState<InventoryAreaLink[]>([]);
   const [inventoryDepts, setInventoryDepts] = useState<InventoryDepartmentLink[]>([]);
   const [profile, setProfile] = useState<{ full_name: string | null; email: string } | null>(null);
+  const [suppliers, setSuppliers] = useState<Array<{ id: string; name: string }>>([]);
   const [view, setView] = useState<ViewId>("Dashboard");
   const [selectedLocation, setSelectedLocation] = useState("Todas");
   const [loading, setLoading] = useState(Boolean(supabase));
@@ -789,11 +934,12 @@ export default function SupplyOsApp() {
         areaLinkRes,
         invAreasRes,
         invDeptsRes,
-        profileRes
+        profileRes,
+        suppliersRes
       ] = await Promise.all([
         supabase.from("user_roles").select("role,sucursal,department,area,location_id,area_id,department_id").eq("user_id", activeUserId).limit(1),
         supabase.from("locations").select("id,name,address").in("name", ["Teran", "San Cristobal", "Aeropuerto"]).order("name"),
-        supabase.from("inventory").select("id,product,unit_price,total_price,brand,presentation,image_url,almacen,location_id,category_id,warehouse_id,rack_id,delicate_management").order("product", { ascending: true }).limit(1000),
+        supabase.from("inventory").select("id,product,unit_price,total_price,brand,presentation,image_url,almacen,location_id,category_id,warehouse_id,rack_id,delicate_management,supplier_id,supplier_2_id,supplier_3_id,brand_2,presentation_2,unit_price_2,total_price_2,brand_3,presentation_3,unit_price_3,total_price_3").order("product", { ascending: true }).limit(1000),
         supabase.from("inventory_locations").select("inventory_id,location_id").limit(5000),
         supabase.rpc("list_abastecimiento_areas"),
         listAbastecimientoRequisitions(supabase),
@@ -804,9 +950,10 @@ export default function SupplyOsApp() {
         supabase.from("inventory_areas").select("inventory_id,area_id").limit(10000),
         supabase.from("inventory_departments").select("inventory_id,department_id").limit(10000),
         supabase.from("profiles").select("full_name,email").eq("id", activeUserId).limit(1),
+        supabase.from("suppliers").select("id,name").order("name"),
       ]);
 
-      const firstError = roleRes.error ?? locationRes.error ?? productRes.error ?? inventoryLocationRes.error ?? areaRes.error ?? reqRes.error ?? purchaseRes.error ?? categoriesRes.error ?? deptRes.error ?? areaLinkRes.error ?? invAreasRes.error ?? invDeptsRes.error ?? profileRes.error;
+      const firstError = roleRes.error ?? locationRes.error ?? productRes.error ?? inventoryLocationRes.error ?? areaRes.error ?? reqRes.error ?? purchaseRes.error ?? categoriesRes.error ?? deptRes.error ?? areaLinkRes.error ?? invAreasRes.error ?? invDeptsRes.error ?? profileRes.error ?? suppliersRes.error;
       if (firstError) {
         setDataError(firstError.message);
         return false;
@@ -906,6 +1053,7 @@ export default function SupplyOsApp() {
       setInventoryAreas((invAreasRes.data as InventoryAreaLink[] | null) ?? []);
       setInventoryDepts((invDeptsRes.data as InventoryDepartmentLink[] | null) ?? []);
       setProfile((profileRes.data?.[0] as { full_name: string | null; email: string } | undefined) ?? null);
+      setSuppliers((suppliersRes.data as Array<{ id: string; name: string }> | null) ?? []);
       return true;
     },
     [supabase],
@@ -1006,6 +1154,7 @@ export default function SupplyOsApp() {
       if (!sessionUser) {
         setRole(null);
         setProfile(null);
+        setSuppliers([]);
         setRequisitions([]);
         setPurchaseOrders([]);
         setSelectedLocation("Todas");
@@ -1081,6 +1230,7 @@ export default function SupplyOsApp() {
               selectedLocation={selectedLocation}
               onNav={setView}
               profile={profile}
+              role={role}
             />
           )}
           {view === "Solicitudes" && (
@@ -1098,10 +1248,11 @@ export default function SupplyOsApp() {
               inventoryAreas={inventoryAreas}
               inventoryDepts={inventoryDepts}
               realtimeBatch={realtimeBatch}
+              suppliers={suppliers}
             />
           )}
           {view === "Inventario" && <InventoryView supabase={supabase} selectedLocation={selectedLocation} role={role} refreshKey={realtimeInvalidations.inventory} />}
-          {view === "Catalogo" && <CatalogView products={products} />}
+          {view === "Catalogo" && <CatalogView products={products} role={role} />}
           {view === "Compras" && (
             <PurchasesView
               supabase={supabase}
@@ -1264,6 +1415,7 @@ function Dashboard({
   selectedLocation,
   onNav,
   profile,
+  role,
 }: {
   products: ProductRow[];
   locations: LocationRow[];
@@ -1271,6 +1423,7 @@ function Dashboard({
   selectedLocation: string;
   onNav: (view: ViewId) => void;
   profile: { full_name: string | null; email: string } | null;
+  role: UserRole | null;
 }) {
   const visibleReqs = filterByLocation(requisitions, selectedLocation);
   const pending = visibleReqs.filter((req) => canonicalRequisitionStatus(req.status) === "pendiente");
@@ -1326,7 +1479,9 @@ function Dashboard({
           <SectionHeader title="Alertas operativas" actionLabel="Ver inventario" onAction={() => onNav("Inventario")} />
           <div className="space-y-2">
             <AlertRow tone="red" message={`${pending.length} requisiciones pendientes de revisión`} />
-            <AlertRow tone="amber" message={`${products.filter((item) => Number(item.unit_price ?? 0) === 0).length} productos maestros sin precio`} />
+            {canUserSeePrices(role) ? (
+              <AlertRow tone="amber" message={`${products.filter((item) => Number(item.unit_price ?? 0) === 0).length} productos maestros sin precio`} />
+            ) : null}
             <AlertRow tone="amber" message={`${products.filter((item) => item.location_ids.length === 0).length} productos sin sucursal asignada`} />
           </div>
         </Card>
@@ -1349,6 +1504,7 @@ function RequisitionsView({
   inventoryAreas,
   inventoryDepts,
   realtimeBatch,
+  suppliers,
 }: {
   supabase: ReturnType<typeof createBrowserSupabaseClient>;
   areas: SupplyArea[];
@@ -1363,7 +1519,9 @@ function RequisitionsView({
   inventoryAreas: InventoryAreaLink[];
   inventoryDepts: InventoryDepartmentLink[];
   realtimeBatch: RealtimeBatch;
+  suppliers: Array<{ id: string; name: string }>;
 }) {
+  const showPrices = canUserSeePrices(role);
   const categoryMap = useMemo(() => {
     const map = new Map<string, string>();
     categories.forEach((cat) => {
@@ -1412,7 +1570,7 @@ function RequisitionsView({
     setDetailError(null);
     try {
       const pdfDetail = detail?.id === requisitionId ? detail : await fetchDetail(requisitionId);
-      await downloadRequisitionPdf(pdfDetail);
+      await downloadRequisitionPdf(pdfDetail, showPrices);
     } catch (pdfError) {
       setDetailError(getErrorMessage(pdfError));
     } finally {
@@ -1457,7 +1615,7 @@ function RequisitionsView({
       const details = await Promise.all(
         selectedIds.map((requisitionId) => (detail?.id === requisitionId ? Promise.resolve(detail) : fetchDetail(requisitionId))),
       );
-      await downloadGeneralRequisitionPdf(details);
+      await downloadGeneralRequisitionPdf(details, showPrices);
     } catch (pdfError) {
       setDetailError(getErrorMessage(pdfError));
     } finally {
@@ -1543,7 +1701,7 @@ function RequisitionsView({
         </div>
         {filtered.length === 0 ? <EmptyState message="No hay solicitudes con este filtro" /> : null}
       </Card>
-      {open ? <NewRequisitionModal supabase={supabase} selectedLocation={selectedLocation} locations={locations} areas={areas} products={filteredProducts} role={role} onClose={() => setOpen(false)} onCreated={async () => { setOpen(false); await reload(); }} /> : null}
+      {open ? <NewRequisitionModal supabase={supabase} selectedLocation={selectedLocation} locations={locations} areas={areas} products={filteredProducts} role={role} suppliers={suppliers} onClose={() => setOpen(false)} onCreated={async () => { setOpen(false); await reload(); }} /> : null}
       {detail ? (
         <RequisitionDetailModal
           key={`${detail.id}-${detail.version ?? detail.updated_at}-${detail.status}`}
@@ -1554,6 +1712,7 @@ function RequisitionsView({
           products={filteredProducts}
           locations={locations}
           role={role}
+          suppliers={suppliers}
           canManageStatus={canManageStatus}
           externalChange={
             hasNewerAggregateEvent(realtimeBatch, ["requisition"], [detail.id], detail.version) ||
@@ -1579,6 +1738,7 @@ function RequisitionDetailModal({
   products,
   locations,
   role,
+  suppliers,
   canManageStatus,
   externalChange,
   onReload,
@@ -1592,12 +1752,16 @@ function RequisitionDetailModal({
   products: ProductRow[];
   locations: LocationRow[];
   role: UserRole | null;
+  suppliers: Array<{ id: string; name: string }>;
   canManageStatus: boolean;
   externalChange: boolean;
   onReload: () => Promise<void>;
   onClose: () => void;
   onUpdated: (detail: SupplyRequisitionDetail) => Promise<void>;
 }) {
+  const showPrices = canUserSeePrices(role);
+  const isPurchaser = isPurchasingOrAdmin(role);
+  const supplierMap = useMemo(() => new Map(suppliers.map((s) => [s.id, s.name])), [suppliers]);
   const productMap = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
   const [locationId, setLocationId] = useState(detail.location_id);
   const [areaId, setAreaId] = useState(detail.area_id ?? "");
@@ -1628,25 +1792,69 @@ function RequisitionDetailModal({
   const statusLocked = workflowStatus === "aprobada_compras" || workflowStatus === "cancelada_compras" || workflowStatus === "completado" || externalChange;
   const isBranchOrSuperAdmin = role?.role === "branch_admin" || role?.role === "super_admin";
   const canEditSelections = canManageStatus && workflowStatus === "revisando_compras" && !externalChange;
-  const reviewDirty = canEditSelections && items.some((item) => {
+  const canEditPayment = !externalChange && canUserEditPaymentMethod(role) && workflowStatus !== "cancelada_compras" && workflowStatus !== "completado";
+  const canSaveReview = !externalChange && (canEditSelections || (canEditPayment && (workflowStatus === "aprobada_compras" || workflowStatus === "revisando_compras")));
+
+  const hasSelectionChanges = canEditSelections && items.some((item) => {
     const persisted = detail.items.find((savedItem) => savedItem.id === item.itemId);
     return !persisted
       || (item.selected !== false) !== persisted.selected
-      || (item.revision_note?.trim() || "") !== (persisted.revision_note?.trim() || "");
+      || (item.revision_note?.trim() || "") !== (persisted.revision_note?.trim() || "")
+      || (item.supplierId || null) !== (persisted.supplier_id || null);
   });
+  const hasPaymentChanges = canEditPayment && items.some((item) => {
+    const persisted = detail.items.find((savedItem) => savedItem.id === item.itemId);
+    if (!persisted) return false;
+    return normalizePaymentMethod(item.paymentMethod) !== normalizePaymentMethod(persisted.payment_method);
+  });
+  const reviewDirty = hasSelectionChanges || hasPaymentChanges;
+
   const canAddItem = Boolean(canEditContent && selectedDraftProduct && Number(draftQuantity) > 0);
   const statusOptions = getRequisitionStatusOptions(workflowStatus);
 
   const selectedTotalMoney = useMemo(() => {
     return items.reduce((sum, item) => {
       if (item.selected === false) return sum;
-      const price = Number(item.product.total_price ?? item.product.unit_price ?? 0);
+      const price = Number(item.unitPrice ?? item.product.total_price ?? item.product.unit_price ?? 0);
       return sum + (Number(item.quantity) * price);
     }, 0);
   }, [items]);
 
+  const paymentTotals = useMemo(() => {
+    const totals: Record<PaymentMethod, number> = {
+      efectivo: 0,
+      tarjeta_credito: 0,
+      tarjeta_debito: 0,
+      transferencia: 0,
+    };
+    for (const item of items) {
+      if (item.selected === false) continue;
+      const price = Number(item.unitPrice ?? item.product.total_price ?? item.product.unit_price ?? 0);
+      const lineTotal = Number(item.quantity || 0) * price;
+      const method = normalizePaymentMethod(item.paymentMethod);
+      totals[method] = (totals[method] || 0) + lineTotal;
+    }
+    return totals;
+  }, [items]);
+
   function updateItem(clientId: string, changes: Partial<RequisitionDraftItem>) {
     setItems((current) => current.map((item) => (item.clientId === clientId ? { ...item, ...changes } : item)));
+  }
+
+  function updateItemSupplier(clientId: string, supplierId: string) {
+    setItems((current) => current.map((item) => {
+      if (item.clientId !== clientId) return item;
+      const opts = getProductSupplierOptions(item.product, supplierMap, showPrices);
+      const chosen = opts.find((o) => o.supplierId === supplierId) ?? opts[0];
+      return {
+        ...item,
+        supplierId,
+        supplierName: chosen?.supplierName ?? null,
+        unitPrice: chosen?.price ?? item.unitPrice,
+        brand: chosen?.brand ?? item.brand,
+        presentation: chosen?.presentation ?? item.presentation,
+      };
+    }));
   }
 
   function updateItemProduct(clientId: string, productId: string) {
@@ -1674,6 +1882,7 @@ function RequisitionDetailModal({
         quantity: draftQuantity,
         notes: draftNotes.trim(),
         product: selectedDraftProduct,
+        paymentMethod: "transferencia",
       },
     ]);
     setDraftProductId("");
@@ -1706,6 +1915,8 @@ function RequisitionDetailModal({
         notes: item.notes,
         selected: item.selected !== false,
         revision_note: item.revision_note || "",
+        supplier_id: item.supplierId || null,
+        payment_method: normalizePaymentMethod(item.paymentMethod),
       })),
       p_location_id: locationId,
       p_needed_by: neededBy || null,
@@ -1731,7 +1942,7 @@ function RequisitionDetailModal({
   }
 
   async function saveReview() {
-    if (!supabase || !canEditSelections || saving || statusSaving) return;
+    if (!supabase || !canSaveReview || saving || statusSaving) return;
     if (items.some((item) => !item.itemId) || !items.some((item) => item.selected !== false)) {
       setError("La revisión debe incluir todas las partidas y conservar al menos una seleccionada.");
       return;
@@ -1748,6 +1959,8 @@ function RequisitionDetailModal({
         item_id: item.itemId,
         revision_note: item.revision_note?.trim() || null,
         selected: item.selected !== false,
+        supplier_id: item.supplierId || null,
+        payment_method: normalizePaymentMethod(item.paymentMethod),
       })),
       p_requisition_id: detail.id,
     });
@@ -1811,7 +2024,7 @@ function RequisitionDetailModal({
           <Button
             variant="secondary"
             onClick={() => {
-              void downloadRequisitionPdf(detail).catch((pdfError) => {
+              void downloadRequisitionPdf(detail, showPrices).catch((pdfError) => {
                 setError(getErrorMessage(pdfError));
               });
             }}
@@ -1825,10 +2038,45 @@ function RequisitionDetailModal({
       <div className="mt-5 grid gap-3 rounded-xl bg-[#FAFAF8] p-4 md:grid-cols-5">
         <KpiMini label="Partidas" value={items.length} />
         <KpiMini label="Cantidad total" value={items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)} />
-        <KpiMini label="Total Seleccionado" value={formatCurrency(selectedTotalMoney)} />
+        {showPrices ? (
+          <KpiMini label="Total Seleccionado" value={formatCurrency(selectedTotalMoney)} />
+        ) : (
+          <KpiMini label="Área" value={detail.area_name ?? "Sin área"} />
+        )}
         <KpiMini label="Necesario para" value={neededBy ? formatDate(neededBy) : "Sin fecha"} />
         <KpiMini label="Última edición" value={formatDateTime(detail.updated_at)} />
       </div>
+
+      {showPrices ? (
+        <div className="mt-4 rounded-xl border border-[#EDE8E3] bg-white p-4">
+          <div className="flex items-center justify-between border-b border-[#EDE8E3] pb-2">
+            <p className="text-xs font-extrabold uppercase tracking-wider text-stone-500">
+              💳 Métodos de pago estimados
+            </p>
+            <span className="text-xs font-bold text-stone-700">
+              Total: {formatCurrency(selectedTotalMoney)}
+            </span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-lg bg-emerald-50/60 p-2.5 border border-emerald-100">
+              <p className="text-[11px] font-bold text-emerald-800">💵 Efectivo</p>
+              <p className="mt-0.5 text-base font-extrabold text-emerald-950">{formatCurrency(paymentTotals.efectivo)}</p>
+            </div>
+            <div className="rounded-lg bg-blue-50/60 p-2.5 border border-blue-100">
+              <p className="text-[11px] font-bold text-blue-800">💳 Tarjeta de Crédito</p>
+              <p className="mt-0.5 text-base font-extrabold text-blue-950">{formatCurrency(paymentTotals.tarjeta_credito)}</p>
+            </div>
+            <div className="rounded-lg bg-indigo-50/60 p-2.5 border border-indigo-100">
+              <p className="text-[11px] font-bold text-indigo-800">💳 Tarjeta de Débito</p>
+              <p className="mt-0.5 text-base font-extrabold text-indigo-950">{formatCurrency(paymentTotals.tarjeta_debito)}</p>
+            </div>
+            <div className="rounded-lg bg-amber-50/60 p-2.5 border border-amber-100">
+              <p className="text-[11px] font-bold text-amber-800">🏦 Transferencia</p>
+              <p className="mt-0.5 text-base font-extrabold text-amber-950">{formatCurrency(paymentTotals.transferencia)}</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {canManageStatus ? (
         <div className="mt-4 grid items-end gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 md:grid-cols-[1fr_auto]">
@@ -1898,7 +2146,13 @@ function RequisitionDetailModal({
         </div>
         <div className="divide-y divide-[#EDE8E3]">
           {items.map((item) => {
-            const price = Number(item.product.total_price ?? item.product.unit_price ?? 0);
+            const price = Number(item.unitPrice ?? item.product.total_price ?? item.product.unit_price ?? 0);
+            const supplierOptions = getProductSupplierOptions(item.product, supplierMap, showPrices);
+            const currentSupplierId = item.supplierId ?? item.product.supplier_id ?? "";
+            const currentSupplierName = supplierOptions.find((o) => o.supplierId === currentSupplierId)?.supplierName
+              ?? item.supplierName
+              ?? (currentSupplierId ? (supplierMap.get(currentSupplierId) ?? "Proveedor") : "Sin proveedor");
+
             return (
               <div key={item.clientId} className="grid gap-3 px-4 py-3 lg:grid-cols-[auto_minmax(0,1fr)_120px_minmax(180px,0.8fr)_40px] lg:items-center">
                 {/* Checkbox for item selection */}
@@ -1924,9 +2178,56 @@ function RequisitionDetailModal({
                       <p className="truncate text-sm font-bold text-stone-950">{item.product.product}</p>
                     )}
                     <p className="mt-1 truncate text-xs font-semibold text-stone-500">
-                      {item.product.presentation ?? "Sin presentación"}
-                      {price > 0 ? ` · ${formatCurrency(price)} c/u (Subtotal: ${formatCurrency(Number(item.quantity) * price)})` : ""}
+                      {item.presentation ?? item.product.presentation ?? "Sin presentación"}
+                      {showPrices && price > 0 ? ` · ${formatCurrency(price)} c/u (Subtotal: ${formatCurrency(Number(item.quantity) * price)})` : ""}
                     </p>
+
+                    {/* Supplier Selector or Indicator for Purchasing / Admin */}
+                    {isPurchaser ? (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                        <span className="text-[11px] font-bold uppercase tracking-wide text-stone-400">Proveedor:</span>
+                        {(canEditSelections || canEditContent) && supplierOptions.length > 1 ? (
+                          <select
+                            value={currentSupplierId}
+                            onChange={(event) => updateItemSupplier(item.clientId, event.target.value)}
+                            className="rounded-md border border-[#DDD7D1] bg-white px-2 py-0.5 text-xs font-medium text-stone-800 shadow-sm focus:border-[#B45309] focus:ring-1 focus:ring-[#B45309]"
+                          >
+                            {supplierOptions.map((opt) => (
+                              <option key={opt.supplierId} value={opt.supplierId}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="rounded bg-[#F5F1EE] px-2 py-0.5 text-xs font-semibold text-stone-700">
+                            {currentSupplierName}
+                          </span>
+                        )}
+                      </div>
+                    ) : null}
+
+                    {/* Payment Method Selector or Indicator */}
+                    {showPrices ? (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                        <span className="text-[11px] font-bold uppercase tracking-wide text-stone-400">Método de pago:</span>
+                        {canEditPayment ? (
+                          <select
+                            value={normalizePaymentMethod(item.paymentMethod)}
+                            onChange={(event) => updateItem(item.clientId, { paymentMethod: event.target.value as PaymentMethod })}
+                            className="rounded-md border border-[#DDD7D1] bg-white px-2 py-0.5 text-xs font-semibold text-stone-800 shadow-sm focus:border-[#B45309] focus:ring-1 focus:ring-[#B45309]"
+                          >
+                            <option value="efectivo">💵 Efectivo</option>
+                            <option value="tarjeta_credito">💳 Tarjeta de Crédito</option>
+                            <option value="tarjeta_debito">💳 Tarjeta de Débito</option>
+                            <option value="transferencia">🏦 Transferencia</option>
+                          </select>
+                        ) : (
+                          <span className="rounded bg-[#F5F1EE] px-2 py-0.5 text-xs font-semibold text-stone-700">
+                            {getPaymentMethodLabel(item.paymentMethod)}
+                          </span>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
                 <Field label="Cantidad">
@@ -1961,14 +2262,14 @@ function RequisitionDetailModal({
       {canEditContent ? (
         <div className="mt-4 rounded-xl border border-[#EDE8E3] bg-[#FAFAF8] p-4">
           <div className="grid items-end gap-4 lg:grid-cols-[1fr_140px_1fr_auto]">
-            <Field label="Agregar producto">
+            <Field label="Producto">
               <select value={draftProductId} onChange={(event) => setDraftProductId(event.target.value)} className="field-input bg-white">
-                <option value="">Seleccionar...</option>
+                <option value="">Selecciona un producto...</option>
                 {availableProducts.map((product) => <option key={product.id} value={product.id}>{product.product} {product.presentation ? `· ${product.presentation}` : ""}</option>)}
               </select>
             </Field>
             <Field label="Cantidad">
-              <input value={draftQuantity} onChange={(event) => setDraftQuantity(event.target.value)} type="number" min="0" step="0.001" className="field-input bg-white" />
+              <input value={draftQuantity} onChange={(event) => setDraftQuantity(event.target.value)} type="number" min="0" step="0.001" className="field-input bg-white" placeholder="0" />
             </Field>
             <Field label="Notas de producto">
               <input value={draftNotes} onChange={(event) => setDraftNotes(event.target.value)} className="field-input bg-white" placeholder="Opcional" />
@@ -1997,7 +2298,11 @@ function RequisitionDetailModal({
       <div className="mt-6 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose}>Cerrar</Button>
         {canEditContent ? <Button disabled={saving || statusSaving} onClick={saveContent}>{saving ? "Guardando..." : "Guardar cambios"}</Button> : null}
-        {canEditSelections ? <Button disabled={saving || statusSaving} onClick={saveReview}>{saving ? "Guardando..." : "Guardar revisión"}</Button> : null}
+        {canSaveReview ? (
+          <Button disabled={saving || statusSaving || !reviewDirty} onClick={saveReview}>
+            {saving ? "Guardando..." : workflowStatus === "aprobada_compras" ? "Guardar métodos de pago" : "Guardar revisión"}
+          </Button>
+        ) : null}
       </div>
     </Modal>
   );
@@ -2010,6 +2315,7 @@ function NewRequisitionModal({
   areas,
   products,
   role,
+  suppliers,
   onClose,
   onCreated,
 }: {
@@ -2019,9 +2325,13 @@ function NewRequisitionModal({
   areas: SupplyArea[];
   products: ProductRow[];
   role: UserRole | null;
+  suppliers: Array<{ id: string; name: string }>;
   onClose: () => void;
   onCreated: () => Promise<void>;
 }) {
+  const showPrices = canUserSeePrices(role);
+  const isPurchaser = isPurchasingOrAdmin(role);
+  const supplierMap = useMemo(() => new Map(suppliers.map((s) => [s.id, s.name])), [suppliers]);
   const defaultLocation = locations.find((location) => location.name === selectedLocation)?.id ?? locations[0]?.id ?? "";
   const [locationId, setLocationId] = useState(defaultLocation);
 
@@ -2047,6 +2357,8 @@ function NewRequisitionModal({
   const [requestType, setRequestType] = useState("ordinaria");
   const [productSearch, setProductSearch] = useState("");
   const [draftProductId, setDraftProductId] = useState("");
+  const [draftSupplierId, setDraftSupplierId] = useState("");
+  const [draftPaymentMethod, setDraftPaymentMethod] = useState<PaymentMethod>("transferencia");
   const [draftQuantity, setDraftQuantity] = useState("");
   const [draftNotes, setDraftNotes] = useState("");
   const [items, setItems] = useState<RequisitionDraftItem[]>([]);
@@ -2059,6 +2371,9 @@ function NewRequisitionModal({
   const deferredProductSearch = useDeferredValue(productSearch);
   const availableProducts = products.filter((product) => productIsAvailableForLocation(product, locationId));
   const selectedProduct = availableProducts.find((product) => product.id === draftProductId);
+  const draftSupplierOptions = useMemo(() => {
+    return getProductSupplierOptions(selectedProduct, supplierMap, showPrices);
+  }, [selectedProduct, supplierMap, showPrices]);
   const locationAreas = areas.filter((area) => area.location_id === locationId);
   const filteredProducts = availableProducts.filter((product) =>
     `${product.product} ${product.brand ?? ""} ${product.presentation ?? ""}`.toLowerCase().includes(deferredProductSearch.trim().toLowerCase()),
@@ -2070,11 +2385,15 @@ function NewRequisitionModal({
     setAreaId("");
     setProductSearch("");
     setDraftProductId("");
+    setDraftSupplierId("");
+    setDraftPaymentMethod("transferencia");
     setItems((current) => current.filter((item) => productIsAvailableForLocation(item.product, nextLocationId)));
   }
 
   function addItem() {
     if (!selectedProduct || Number(draftQuantity) <= 0) return;
+    const chosenSupplierId = draftSupplierId || selectedProduct.supplier_id || null;
+    const chosenOpt = draftSupplierOptions.find((o) => o.supplierId === chosenSupplierId) ?? draftSupplierOptions[0];
     nextClientId.current += 1;
     const clientId = globalThis.crypto?.randomUUID?.() ?? `${selectedProduct.id}-${nextClientId.current}`;
     setItems((current) => [
@@ -2085,10 +2404,18 @@ function NewRequisitionModal({
         quantity: draftQuantity,
         notes: draftNotes.trim(),
         product: selectedProduct,
+        supplierId: chosenSupplierId,
+        supplierName: chosenOpt?.supplierName ?? null,
+        paymentMethod: draftPaymentMethod || "transferencia",
+        unitPrice: chosenOpt?.price ?? Number(selectedProduct.total_price ?? selectedProduct.unit_price ?? 0),
+        brand: chosenOpt?.brand ?? selectedProduct.brand,
+        presentation: chosenOpt?.presentation ?? selectedProduct.presentation,
       },
     ]);
     setProductSearch("");
     setDraftProductId("");
+    setDraftSupplierId("");
+    setDraftPaymentMethod("transferencia");
     setDraftQuantity("");
     setDraftNotes("");
     setError(null);
@@ -2109,6 +2436,8 @@ function NewRequisitionModal({
         quantity: Number(item.quantity),
         unit: "",
         notes: item.notes,
+        supplier_id: item.supplierId || null,
+        payment_method: normalizePaymentMethod(item.paymentMethod),
       })),
       p_location_id: locationId,
       p_needed_by: neededBy || null,
@@ -2161,13 +2490,53 @@ function NewRequisitionModal({
                 <input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} className="field-input bg-white" placeholder="Nombre, marca o presentación..." />
               </Field>
               <Field label="Producto">
-                <select value={draftProductId} onChange={(event) => setDraftProductId(event.target.value)} className="field-input bg-white">
+                <select
+                  value={draftProductId}
+                  onChange={(event) => {
+                    const nextPid = event.target.value;
+                    setDraftProductId(nextPid);
+                    const nextProd = availableProducts.find((p) => p.id === nextPid);
+                    setDraftSupplierId(nextProd?.supplier_id ?? "");
+                  }}
+                  className="field-input bg-white"
+                >
                   <option value="">Seleccionar...</option>
                   {filteredProducts.map((product) => <option key={product.id} value={product.id}>{product.product} {product.presentation ? `· ${product.presentation}` : ""}{product.brand ? ` · ${product.brand}` : ""}</option>)}
                 </select>
               </Field>
             </div>
-            <div className="grid items-end gap-4 md:grid-cols-[160px_1fr_auto]">
+            {isPurchaser ? (
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                {draftSupplierOptions.length > 1 ? (
+                  <Field label="Proveedor para la requi">
+                    <select
+                      value={draftSupplierId || (selectedProduct?.supplier_id ?? "")}
+                      onChange={(event) => setDraftSupplierId(event.target.value)}
+                      className="field-input bg-white font-medium"
+                    >
+                      {draftSupplierOptions.map((opt) => (
+                        <option key={opt.supplierId} value={opt.supplierId}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                ) : <div />}
+                <Field label="Método de pago">
+                  <select
+                    value={draftPaymentMethod}
+                    onChange={(event) => setDraftPaymentMethod(event.target.value as PaymentMethod)}
+                    className="field-input bg-white font-medium"
+                  >
+                    <option value="efectivo">💵 Efectivo</option>
+                    <option value="tarjeta_credito">💳 Tarjeta de Crédito</option>
+                    <option value="tarjeta_debito">💳 Tarjeta de Débito</option>
+                    <option value="transferencia">🏦 Transferencia</option>
+                  </select>
+                </Field>
+              </div>
+            ) : null}
+            <div className="mt-3 grid items-end gap-4 md:grid-cols-[160px_1fr_auto]">
               <Field label="Cantidad">
                 <input value={draftQuantity} onChange={(event) => setDraftQuantity(event.target.value)} type="number" min="0" step="0.001" className="field-input bg-white" />
               </Field>
@@ -2197,7 +2566,12 @@ function NewRequisitionModal({
                     <ProductThumb product={item.product} />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold text-stone-950">{item.product.product}</p>
-                      <p className="truncate text-xs font-semibold text-stone-500">{item.product.presentation ?? "Sin presentación"}</p>
+                      <p className="truncate text-xs font-semibold text-stone-500">
+                        {item.presentation ?? item.product.presentation ?? "Sin presentación"}
+                        {isPurchaser && item.supplierName ? ` · Proveedor: ${item.supplierName}` : ""}
+                        {showPrices ? ` · Pago: ${getPaymentMethodLabel(item.paymentMethod)}` : ""}
+                        {showPrices && Number(item.unitPrice ?? 0) > 0 ? ` · ${formatCurrency(Number(item.unitPrice))} c/u` : ""}
+                      </p>
                       {item.notes ? <p className="mt-1 truncate text-xs text-stone-500">{item.notes}</p> : null}
                     </div>
                   </div>
@@ -2297,6 +2671,12 @@ function detailItemToDraftItem(item: SupplyRequisitionItem, product?: ProductRow
     notes: item.notes ?? "",
     selected: item.selected ?? true,
     revision_note: item.revision_note ?? "",
+    supplierId: item.supplier_id ?? product?.supplier_id ?? null,
+    supplierName: item.supplier_name ?? null,
+    paymentMethod: normalizePaymentMethod(item.payment_method),
+    unitPrice: item.unit_price ?? item.total_price ?? null,
+    brand: item.brand,
+    presentation: item.presentation,
     product: product ?? {
       id: item.product_id,
       product: item.product,
@@ -2351,18 +2731,28 @@ type PdfColumn = {
   align: "left" | "center" | "right";
 };
 
-async function downloadRequisitionPdf(detail: SupplyRequisitionDetail) {
+async function downloadRequisitionPdf(detail: SupplyRequisitionDetail, canSeePrices: boolean = true) {
   const doc = createLetterPdf();
-  const cursorY = renderPdfDocumentHeader(doc, detail.folio, `Sucursal ${detail.location_name}`, formatCurrency(getRequisitionTotal(detail)));
-  await renderRequisitionPdfSection(doc, detail, cursorY, false);
+  const cursorY = renderPdfDocumentHeader(
+    doc,
+    detail.folio,
+    `Sucursal ${detail.location_name}`,
+    canSeePrices ? formatCurrency(getRequisitionTotal(detail)) : undefined,
+  );
+  await renderRequisitionPdfSection(doc, detail, cursorY, false, canSeePrices);
   renderPdfFooter(doc);
   doc.save(`${sanitizeFilename(detail.folio)}.pdf`);
 }
 
-async function downloadGeneralRequisitionPdf(details: SupplyRequisitionDetail[]) {
+async function downloadGeneralRequisitionPdf(details: SupplyRequisitionDetail[], canSeePrices: boolean = true) {
   const doc = createLetterPdf();
   const grandTotal = details.reduce((sum, d) => sum + getRequisitionTotal(d), 0);
-  let cursorY = renderPdfDocumentHeader(doc, "Requisiciones Generales", `${details.length} requisiciones seleccionadas · ${groupByLocation(details).length} sucursales`, formatCurrency(grandTotal));
+  let cursorY = renderPdfDocumentHeader(
+    doc,
+    "Requisiciones Generales",
+    `${details.length} requisiciones seleccionadas · ${groupByLocation(details).length} sucursales`,
+    canSeePrices ? formatCurrency(grandTotal) : undefined,
+  );
   let currentLocation = "";
 
   for (const detail of sortRequisitionsForPdf(details)) {
@@ -2378,7 +2768,7 @@ async function downloadGeneralRequisitionPdf(details: SupplyRequisitionDetail[])
       cursorY += 30;
     }
 
-    cursorY = await renderRequisitionPdfSection(doc, detail, cursorY, true);
+    cursorY = await renderRequisitionPdfSection(doc, detail, cursorY, true, canSeePrices);
   }
 
   renderPdfFooter(doc);
@@ -2589,7 +2979,11 @@ function renderInventoryReportHeader(doc: jsPDF, cursorY: number) {
 
 function renderPurchaseOrderItemRow(doc: jsPDF, item: SupplyRequisitionItem, imageDataUrl: string | null, index: number, cursorY: number) {
   const columns = getPurchaseOrderColumns();
-  const productText = [item.product, item.brand ? `Marca: ${item.brand}` : null].filter(Boolean).join("\n");
+  const productText = [
+    item.product,
+    item.brand ? `Marca: ${item.brand}` : null,
+    `Pago: ${getPaymentMethodLabel(item.payment_method)}`,
+  ].filter(Boolean).join("\n");
   const productLines = doc.splitTextToSize(productText, getPurchaseOrderColumn(columns, "product").width - 8);
   const presentationLines = doc.splitTextToSize(item.presentation ?? "Sin presentación", getPurchaseOrderColumn(columns, "presentation").width - 8);
   const rowHeight = Math.max(54, productLines.length * 11 + 16, presentationLines.length * 11 + 16);
@@ -2706,6 +3100,53 @@ function renderInventoryReportRow(doc: jsPDF, row: InventoryStoredRow, index: nu
 }
 
 function renderPurchaseOrderTotals(doc: jsPDF, detail: { estimated_total?: number | string | null; items: SupplyRequisitionItem[] }, cursorY: number) {
+  const paymentTotals = detail.items.reduce((acc, item) => {
+    if (item.selected === false) return acc;
+    const price = Number(item.unit_price ?? item.unit_cost ?? item.total_price ?? 0);
+    const lineTotal = Number(item.quantity ?? 0) * price;
+    const method = normalizePaymentMethod(item.payment_method);
+    acc[method] = (acc[method] || 0) + lineTotal;
+    return acc;
+  }, {
+    efectivo: 0,
+    tarjeta_credito: 0,
+    tarjeta_debito: 0,
+    transferencia: 0,
+  } as Record<PaymentMethod, number>);
+
+  cursorY = ensurePdfSpace(doc, cursorY, 52);
+  doc.setFillColor(...PDF_PALETTE.paper);
+  doc.setDrawColor(...PDF_PALETTE.border);
+  doc.roundedRect(PDF_LAYOUT.margin, cursorY, getPdfContentWidth(), 38, 6, 6, "FD");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  doc.setTextColor(...PDF_PALETTE.muted);
+  doc.text("DESGLOSE ESTIMADO POR MÉTODO DE PAGO", PDF_LAYOUT.margin + 10, cursorY + 11);
+
+  const colWidth = (getPdfContentWidth() - 20) / 4;
+  const methods: Array<{ label: string; amount: number }> = [
+    { label: "Efectivo", amount: paymentTotals.efectivo },
+    { label: "Tarjeta Crédito", amount: paymentTotals.tarjeta_credito },
+    { label: "Tarjeta Débito", amount: paymentTotals.tarjeta_debito },
+    { label: "Transferencia", amount: paymentTotals.transferencia },
+  ];
+
+  methods.forEach((m, idx) => {
+    const x = PDF_LAYOUT.margin + 10 + idx * colWidth;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.setTextColor(...PDF_PALETTE.muted);
+    doc.text(m.label, x, cursorY + 22);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8.5);
+    doc.setTextColor(...PDF_PALETTE.dark);
+    doc.text(formatCurrency(m.amount), x, cursorY + 31);
+  });
+
+  cursorY += 46;
+
   cursorY = ensurePdfSpace(doc, cursorY, 48);
   const width = 210;
   const x = PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin - width;
@@ -2748,7 +3189,13 @@ function renderPdfDocumentHeader(doc: jsPDF, title: string, subtitle: string, me
   return PDF_LAYOUT.margin + 72;
 }
 
-async function renderRequisitionPdfSection(doc: jsPDF, detail: SupplyRequisitionDetail, startY: number, compact: boolean) {
+async function renderRequisitionPdfSection(
+  doc: jsPDF,
+  detail: SupplyRequisitionDetail,
+  startY: number,
+  compact: boolean,
+  canSeePrices: boolean = true,
+) {
   let cursorY = ensurePdfSpace(doc, startY, compact ? 120 : 132);
   const imageMap = await buildItemImageMap(detail.items);
 
@@ -2779,19 +3226,117 @@ async function renderRequisitionPdfSection(doc: jsPDF, detail: SupplyRequisition
   cursorY += 88;
   cursorY = renderPdfMetaBoxes(doc, metaEntries, cursorY);
   cursorY += 10;
-  cursorY = renderPdfItemsTableHeader(doc, cursorY);
 
-  for (const [index, item] of detail.items.entries()) {
-    cursorY = await renderPdfItemRow(doc, item, imageMap.get(item.id) ?? null, index + 1, cursorY);
+  // Group items by supplier
+  const groupedItems = detail.items.reduce((acc, item) => {
+    const supplierName = item.supplier_name || "Sin Proveedor";
+    if (!acc[supplierName]) {
+      acc[supplierName] = [];
+    }
+    acc[supplierName].push(item);
+    return acc;
+  }, {} as Record<string, SupplyRequisitionItem[]>);
+
+  let globalIndex = 1;
+  const suppliers = Object.keys(groupedItems).sort();
+
+  for (const supplierName of suppliers) {
+    const items = groupedItems[supplierName];
+
+    cursorY = ensurePdfSpace(doc, cursorY, 32);
+    doc.setFillColor(...PDF_PALETTE.paper);
+    doc.roundedRect(PDF_LAYOUT.margin, cursorY, getPdfContentWidth(), 20, 4, 4, "F");
+    doc.setTextColor(...PDF_PALETTE.accent);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text(`Proveedor: ${supplierName}`, PDF_LAYOUT.margin + 8, cursorY + 13);
+    cursorY += 24;
+
+    cursorY = renderPdfItemsTableHeader(doc, cursorY, canSeePrices);
+
+    let supplierTotal = 0;
+    for (const item of items) {
+      cursorY = await renderPdfItemRow(doc, item, imageMap.get(item.id) ?? null, globalIndex, cursorY, canSeePrices);
+      globalIndex++;
+      if (item.selected !== false) {
+        const price = Number(item.unit_price ?? item.total_price ?? 0);
+        supplierTotal += Number(item.quantity ?? 0) * price;
+      }
+    }
+
+    if (canSeePrices) {
+      cursorY = ensurePdfSpace(doc, cursorY, 20);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(...PDF_PALETTE.dark);
+      doc.text(
+        `Total estimado para gastar con ${supplierName}: ${formatCurrency(supplierTotal)}`,
+        PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin,
+        cursorY + 11,
+        { align: "right" },
+      );
+      cursorY += 16;
+    } else {
+      cursorY += 6;
+    }
   }
 
-  const requisitionTotal = getRequisitionTotal(detail);
-  cursorY = ensurePdfSpace(doc, cursorY, 28);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(...PDF_PALETTE.dark);
-  doc.text(`Total Requisición: ${formatCurrency(requisitionTotal)}`, PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin, cursorY + 12, { align: "right" });
-  cursorY += 20;
+  if (canSeePrices) {
+    const requisitionTotal = getRequisitionTotal(detail);
+    const paymentTotals = detail.items.reduce((acc, item) => {
+      if (item.selected === false) return acc;
+      const price = Number(item.unit_price ?? item.total_price ?? 0);
+      const lineTotal = Number(item.quantity ?? 0) * price;
+      const method = normalizePaymentMethod(item.payment_method);
+      acc[method] = (acc[method] || 0) + lineTotal;
+      return acc;
+    }, {
+      efectivo: 0,
+      tarjeta_credito: 0,
+      tarjeta_debito: 0,
+      transferencia: 0,
+    } as Record<PaymentMethod, number>);
+
+    cursorY = ensurePdfSpace(doc, cursorY, 52);
+    doc.setFillColor(...PDF_PALETTE.paper);
+    doc.setDrawColor(...PDF_PALETTE.border);
+    doc.roundedRect(PDF_LAYOUT.margin, cursorY, getPdfContentWidth(), 38, 6, 6, "FD");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(...PDF_PALETTE.muted);
+    doc.text("DESGLOSE ESTIMADO POR MÉTODO DE PAGO", PDF_LAYOUT.margin + 10, cursorY + 11);
+
+    const colWidth = (getPdfContentWidth() - 20) / 4;
+    const methods: Array<{ label: string; amount: number }> = [
+      { label: "Efectivo", amount: paymentTotals.efectivo },
+      { label: "Tarjeta Crédito", amount: paymentTotals.tarjeta_credito },
+      { label: "Tarjeta Débito", amount: paymentTotals.tarjeta_debito },
+      { label: "Transferencia", amount: paymentTotals.transferencia },
+    ];
+
+    methods.forEach((m, idx) => {
+      const x = PDF_LAYOUT.margin + 10 + idx * colWidth;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(...PDF_PALETTE.muted);
+      doc.text(m.label, x, cursorY + 22);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(...PDF_PALETTE.dark);
+      doc.text(formatCurrency(m.amount), x, cursorY + 31);
+    });
+
+    cursorY += 46;
+
+    cursorY = ensurePdfSpace(doc, cursorY, 28);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(...PDF_PALETTE.dark);
+    doc.text(`Total Requisición: ${formatCurrency(requisitionTotal)}`, PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin, cursorY + 12, { align: "right" });
+    cursorY += 20;
+  }
 
   cursorY = renderPdfNotes(doc, detail.notes ?? "Sin notas", cursorY);
 
@@ -2820,13 +3365,13 @@ function renderPdfMetaBoxes(doc: jsPDF, entries: ReadonlyArray<readonly [string,
   return cursorY + 46;
 }
 
-function renderPdfItemsTableHeader(doc: jsPDF, cursorY: number) {
+function renderPdfItemsTableHeader(doc: jsPDF, cursorY: number, canSeePrices: boolean = true) {
   doc.setFillColor(...PDF_PALETTE.paper);
   doc.rect(PDF_LAYOUT.margin, cursorY, getPdfContentWidth(), 22, "F");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8);
   doc.setTextColor(...PDF_PALETTE.muted);
-  const columns = getPdfColumns();
+  const columns = getPdfColumns(canSeePrices);
 
   columns.forEach((column) => {
     const x = PDF_LAYOUT.margin + column.x;
@@ -2839,11 +3384,22 @@ function renderPdfItemsTableHeader(doc: jsPDF, cursorY: number) {
   return cursorY + 22;
 }
 
-async function renderPdfItemRow(doc: jsPDF, item: SupplyRequisitionItem, imageDataUrl: string | null, index: number, cursorY: number) {
-  const columns = getPdfColumns();
+async function renderPdfItemRow(
+  doc: jsPDF,
+  item: SupplyRequisitionItem,
+  imageDataUrl: string | null,
+  index: number,
+  cursorY: number,
+  canSeePrices: boolean = true,
+) {
+  const columns = getPdfColumns(canSeePrices);
   const isSelected = item.selected !== false;
   const productPrefix = isSelected ? "" : "[NO SELECCIONADO] ";
-  const productText = [productPrefix + item.product, item.brand ? `Marca: ${item.brand}` : null].filter(Boolean).join("\n");
+  const productText = [
+    productPrefix + item.product,
+    item.brand ? `Marca: ${item.brand}` : null,
+    canSeePrices ? `Pago: ${getPaymentMethodLabel(item.payment_method)}` : null,
+  ].filter(Boolean).join("\n");
   const presentationLines = doc.splitTextToSize(item.presentation ?? "Sin presentación", getColumn(columns, "presentation").width - 8);
   const productLines = doc.splitTextToSize(productText, getColumn(columns, "product").width - 8);
   
@@ -2857,7 +3413,7 @@ async function renderPdfItemRow(doc: jsPDF, item: SupplyRequisitionItem, imageDa
 
   cursorY = ensurePdfSpace(doc, cursorY, rowHeight + 12);
   if (cursorY === PDF_LAYOUT.margin) {
-    cursorY = renderPdfItemsTableHeader(doc, cursorY);
+    cursorY = renderPdfItemsTableHeader(doc, cursorY, canSeePrices);
   }
 
   doc.setDrawColor(...PDF_PALETTE.border);
@@ -2874,8 +3430,10 @@ async function renderPdfItemRow(doc: jsPDF, item: SupplyRequisitionItem, imageDa
   drawPdfCellText(doc, productLines, columns, "product", cursorY, rowHeight);
   drawPdfCellText(doc, presentationLines, columns, "presentation", cursorY, rowHeight);
   drawPdfCellText(doc, formatNumber(item.quantity), columns, "quantity", cursorY, rowHeight, "right");
-  drawPdfCellText(doc, formatCurrency(price), columns, "price", cursorY, rowHeight, "right");
-  drawPdfCellText(doc, formatCurrency(lineTotal), columns, "lineTotal", cursorY, rowHeight, "right");
+  if (canSeePrices) {
+    drawPdfCellText(doc, formatCurrency(price), columns, "price", cursorY, rowHeight, "right");
+    drawPdfCellText(doc, formatCurrency(lineTotal), columns, "lineTotal", cursorY, rowHeight, "right");
+  }
   drawPdfCellText(doc, notesLines.length > 0 ? notesLines : " ", columns, "notes", cursorY, rowHeight);
 
   return cursorY + rowHeight;
@@ -2927,7 +3485,17 @@ function getPdfContentWidth() {
   return PDF_LAYOUT.pageWidth - PDF_LAYOUT.margin * 2;
 }
 
-function getPdfColumns() {
+function getPdfColumns(canSeePrices: boolean = true) {
+  if (!canSeePrices) {
+    return [
+      { key: "index", label: "#", x: 0, width: 24, align: "center" as const },
+      { key: "image", label: "Imagen", x: 28, width: 44, align: "left" as const },
+      { key: "product", label: "Producto", x: 76, width: 170, align: "left" as const },
+      { key: "presentation", label: "Presentacion", x: 250, width: 110, align: "left" as const },
+      { key: "quantity", label: "Cant.", x: 364, width: 50, align: "right" as const },
+      { key: "notes", label: "Notas", x: 418, width: 118, align: "left" as const },
+    ];
+  }
   return [
     { key: "index", label: "#", x: 0, width: 20, align: "center" as const },
     { key: "image", label: "Imagen", x: 24, width: 42, align: "left" as const },
@@ -3157,21 +3725,26 @@ function formatTodayForFilename() {
   }).format(new Date());
 }
 
-function CatalogView({ products }: { products: ProductRow[] }) {
+function CatalogView({ products, role }: { products: ProductRow[]; role: UserRole | null }) {
   const [search, setSearch] = useState("");
+  const showPrices = canUserSeePrices(role);
   const filtered = products.filter((product) => `${product.product} ${product.brand ?? ""} ${product.presentation ?? ""} ${product.almacen ?? ""}`.toLowerCase().includes(search.toLowerCase()));
+
+  const columns: Array<[keyof ProductRow | string, string]> = showPrices
+    ? [["product", "Producto"], ["unit_price", "Precio"], ["brand", "Marca"], ["presentation", "Presentación"], ["almacen", "Almacén"]]
+    : [["product", "Producto"], ["brand", "Marca"], ["presentation", "Presentación"], ["almacen", "Almacén"]];
 
   return (
     <div>
-      <PageHeader title="Catálogo de insumos" subtitle="Maestro de productos y costos" />
+      <PageHeader title="Catálogo de insumos" subtitle={showPrices ? "Maestro de productos y costos" : "Maestro de productos e insumos"} />
       <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar insumo, marca o presentación..." className="field-input mb-5 mt-6 max-w-sm" />
       <Card className="p-0">
         <DataTable
-          columns={[["product", "Producto"], ["unit_price", "Precio"], ["brand", "Marca"], ["presentation", "Presentación"], ["almacen", "Almacén"]]}
+          columns={columns}
           rows={filtered}
           renderCell={(key, product) => {
             if (key === "product") return <span className="font-semibold text-stone-950">{product.product}</span>;
-            if (key === "unit_price") return formatCurrency(product.unit_price);
+            if (key === "unit_price") return showPrices ? formatCurrency(product.unit_price) : "—";
             return String((product as unknown as Record<string, unknown>)[key] ?? "—");
           }}
         />
@@ -3191,6 +3764,7 @@ function InventoryView({
   role: UserRole | null;
   refreshKey: number;
 }) {
+  const showPrices = canUserSeePrices(role);
   const [activeTab, setActiveTab] = useState<"almacen" | "consumos">("almacen");
   const [searchQuery, setSearchQuery] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -3424,11 +3998,11 @@ function InventoryView({
       {/* TAB 1: ALMACEN Y EXISTENCIAS */}
       {activeTab === "almacen" && (
         <div>
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className={`grid gap-3 ${showPrices ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
             <KpiCard label="Disponible en gramos" value={formatNumber(totalGrams)} sub="g" accent />
             <KpiCard label="Disponible en mililitros" value={formatNumber(totalMilliliters)} sub="ml" />
             <KpiCard label="Disponible en piezas" value={formatNumber(totalPieces)} sub="pzas" />
-            <KpiCard label="Valor disponible" value={formatCurrency(totalValue)} />
+            {showPrices ? <KpiCard label="Valor disponible" value={formatCurrency(totalValue)} /> : null}
           </div>
 
           <div className="mt-5 grid gap-3 rounded-xl border border-[#EDE8E3] bg-white p-4 md:grid-cols-2 xl:grid-cols-[1.5fr_160px_140px_130px_140px_auto] xl:items-end">
@@ -3483,7 +4057,10 @@ function InventoryView({
               <table className="w-full border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-[#EDE8E3]">
-                    {["Ingreso", "Producto", "Sucursal", "Almacén", "Rack", "Categoría", "Existencia base", "Lote", "Caducidad", "Cuidado", "Valor disponible"].map((label) => (
+                    {(showPrices
+                      ? ["Ingreso", "Producto", "Sucursal", "Almacén", "Rack", "Categoría", "Existencia base", "Lote", "Caducidad", "Cuidado", "Valor disponible"]
+                      : ["Ingreso", "Producto", "Sucursal", "Almacén", "Rack", "Categoría", "Existencia base", "Lote", "Caducidad", "Cuidado"]
+                    ).map((label) => (
                       <th key={label} className="whitespace-nowrap px-4 py-3 text-[11px] font-bold uppercase tracking-[0.06em] text-stone-400">{label}</th>
                     ))}
                   </tr>
@@ -3529,10 +4106,12 @@ function InventoryView({
                       <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.lot_code || "—"}</td>
                       <td className="whitespace-nowrap px-4 py-3 text-stone-700">{row.expires_at ? formatDate(row.expires_at) : "—"}</td>
                       <td className="whitespace-nowrap px-4 py-3">{row.delicate_management ? <Badge status="cuidado_especial" /> : <span className="text-stone-400">Normal</span>}</td>
-                      <td className="whitespace-nowrap px-4 py-3">
-                        <p className="font-bold text-stone-950">{formatCurrency(row.available_value)}</p>
-                        {row.base_unit ? <p className="text-xs font-semibold text-stone-500">{formatCurrency(row.base_unit_cost)} / {row.base_unit}</p> : null}
-                      </td>
+                      {showPrices ? (
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <p className="font-bold text-stone-950">{formatCurrency(row.available_value)}</p>
+                          {row.base_unit ? <p className="text-xs font-semibold text-stone-500">{formatCurrency(row.base_unit_cost)} / {row.base_unit}</p> : null}
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
                 </tbody>
